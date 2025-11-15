@@ -6,10 +6,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
+import logging
 import struct
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from PIL import Image
+
+
+logger = logging.getLogger(__name__)
 
 
 class WQVImageKind(str, Enum):
@@ -53,6 +57,16 @@ class WQVImage:
         # Pillow owns the buffer, so we need to keep a reference alive.
         qimage.ndarray = data  # type: ignore[attr-defined]
         return qimage
+
+
+@dataclass
+class PalmRecord:
+    """Represents a single Palm database record."""
+
+    attr: int
+    unique_id: int
+    payload: bytes
+    index: int
 
 
 def load_wqv_image(path: Path | str) -> WQVImage:
@@ -126,47 +140,35 @@ def load_wqv_pdb(path: Path | str, *, width: int = 120, height: int = 120) -> Li
     """Extract all monochrome captures stored inside a ``WQVLinkDB.PDB`` archive."""
 
     path = Path(path)
-    data = path.read_bytes()
-    if len(data) < 78:
-        raise ValueError(f"File {path} is too small to be a Palm database")
+    header, records = _read_palm_database(path)
 
-    num_records = struct.unpack_from(">H", data, 76)[0]
-    record_table_size = 78 + num_records * 8
-    if len(data) < record_table_size:
-        raise ValueError(f"Palm database header truncated in {path}")
-
-    records = [
-        (
-            struct.unpack_from(">I", data, 78 + i * 8)[0],
-            data[78 + i * 8 + 4],
-            int.from_bytes(data[78 + i * 8 + 5 : 78 + i * 8 + 8], "big"),
-        )
-        for i in range(num_records)
-    ]
-
-    # Append sentinel for easier slicing.
-    records.append((len(data), 0, 0))
+    cleaned_records: List[PalmRecord] = [record for record in records if record.payload]
+    removed = len(records) - len(cleaned_records)
+    if removed:
+        logger.info("Removing %s empty Palm database records from %s", removed, path)
+        _write_palm_database(path, header, cleaned_records)
+        records = cleaned_records
+    else:
+        records = cleaned_records
 
     images: List[WQVImage] = []
-    for index in range(num_records):
-        start, attr, unique_id = records[index]
-        end = records[index + 1][0]
-        if not (0 <= start <= end <= len(data)):
-            raise ValueError(f"Palm database record {index} has invalid bounds")
-        payload = data[start:end]
+    for new_index, record in enumerate(records):
         record_metadata = {
-            "record_index": str(index),
-            "record_attr": str(attr),
-            "record_unique_id": str(unique_id),
+            "record_index": str(new_index),
+            "record_attr": str(record.attr),
+            "record_unique_id": str(record.unique_id),
             "source_pdb": str(path),
         }
         synthetic_name = (
-            f"{path.stem}_{unique_id:07d}.pdr" if unique_id else f"{path.stem}_record{index:03d}.pdr"
+            f"{path.stem}_{record.unique_id:07d}.pdr"
+            if record.unique_id
+            else f"{path.stem}_record{new_index:03d}.pdr"
         )
         synthetic_path = path.with_name(synthetic_name)
+
         images.append(
             _load_wqv_monochrome_from_bytes(
-                payload,
+                record.payload,
                 synthetic_path,
                 width=width,
                 height=height,
@@ -175,6 +177,56 @@ def load_wqv_pdb(path: Path | str, *, width: int = 120, height: int = 120) -> Li
         )
 
     return images
+
+
+def load_wqv_backup(root: Path | str) -> List[WQVImage]:
+    """Load every WQV-compatible image contained in a backup directory or file."""
+
+    root_path = Path(root)
+    if root_path.is_file():
+        return _load_wqv_file(root_path)
+
+    if not root_path.is_dir():
+        raise FileNotFoundError(f"Path {root_path} does not exist")
+
+    supported_suffixes = {
+        ".pdb",
+        ".bin",
+        ".pdr",
+        ".wqv",
+        ".jpg",
+        ".jpeg",
+        ".jpe",
+    }
+
+    collected: List[WQVImage] = []
+    files = sorted(
+        (candidate for candidate in root_path.rglob("*") if candidate.is_file()),
+        key=lambda candidate: (candidate.relative_to(root_path).as_posix().lower(), candidate.name.lower()),
+    )
+
+    for file_path in files:
+        if file_path.suffix.lower() not in supported_suffixes:
+            continue
+        try:
+            if file_path.suffix.lower() == ".pdb":
+                collected.extend(load_wqv_pdb(file_path))
+            else:
+                collected.append(load_wqv_image(file_path))
+        except Exception as exc:  # pragma: no cover - dataset variability
+            logger.warning("Skipping %s: %s", file_path, exc)
+            continue
+
+    return collected
+
+
+def _load_wqv_file(path: Path) -> List[WQVImage]:
+    suffix = path.suffix.lower()
+    if suffix == ".pdb":
+        return load_wqv_pdb(path)
+    if suffix in {".bin", ".pdr", ".wqv", ".jpg", ".jpeg", ".jpe"}:
+        return [load_wqv_image(path)]
+    raise ValueError(f"Unsupported WQV file type: {path}")
 
 
 def _decode_four_bit_grayscale(data: Iterable[int], pixel_count: int) -> bytes:
@@ -263,3 +315,85 @@ def _locate_monochrome_payload(raw: bytes, nibble_count: int) -> Tuple[int, byte
 
     fallback_offset = max(len(raw) - nibble_count, 0)
     return fallback_offset, raw[fallback_offset : fallback_offset + nibble_count]
+
+
+def _read_palm_database(path: Path) -> Tuple[bytearray, List[PalmRecord]]:
+    data = Path(path).read_bytes()
+    if len(data) < 78:
+        raise ValueError(f"File {path} is too small to be a Palm database")
+
+    header = bytearray(data[:78])
+    num_records = struct.unpack_from(">H", header, 76)[0]
+    record_table_size = 78 + num_records * 8
+    if len(data) < record_table_size:
+        raise ValueError(f"Palm database header truncated in {path}")
+
+    offsets: List[int] = []
+    records: List[PalmRecord] = []
+    for index in range(num_records):
+        offset = struct.unpack_from(">I", data, 78 + index * 8)[0]
+        attr = data[78 + index * 8 + 4]
+        unique_id = int.from_bytes(data[78 + index * 8 + 5 : 78 + index * 8 + 8], "big")
+        offsets.append(offset)
+        records.append(PalmRecord(attr=attr, unique_id=unique_id, payload=b"", index=index))
+
+    offsets.append(len(data))
+
+    for index, record in enumerate(records):
+        start = offsets[index]
+        end = offsets[index + 1]
+        if not (0 <= start <= end <= len(data)):
+            raise ValueError(f"Palm database record {index} has invalid bounds")
+        record.payload = data[start:end]
+
+    return header, records
+
+
+def _write_palm_database(path: Path, header: bytearray, records: Sequence[PalmRecord]) -> None:
+    new_header = bytearray(header)
+    struct.pack_into(">H", new_header, 76, len(records))
+
+    record_table = bytearray()
+    data_section = bytearray()
+    offset = 78 + len(records) * 8
+
+    for record in records:
+        record_table.extend(struct.pack(">I", offset))
+        record_table.append(record.attr & 0xFF)
+        record_table.extend(int(record.unique_id).to_bytes(3, "big", signed=False))
+        data_section.extend(record.payload)
+        offset += len(record.payload)
+
+    Path(path).write_bytes(bytes(new_header + record_table + data_section))
+
+
+def delete_wqv_pdb_records(
+    path: Path | str,
+    selectors: Iterable[Tuple[Optional[int], Optional[int]]],
+) -> int:
+    """Delete Palm database records selected by ``selectors``.
+
+    Each selector contains ``(unique_id, index)`` where ``unique_id`` may be ``None``.
+    """
+
+    selectors = [(uid, idx) for uid, idx in selectors]
+    if not selectors:
+        return 0
+
+    path = Path(path)
+    header, records = _read_palm_database(path)
+
+    def _matches(record: PalmRecord) -> bool:
+        for unique_id, index in selectors:
+            if unique_id is not None and record.unique_id == unique_id:
+                return True
+            if unique_id is None and index is not None and record.index == index:
+                return True
+        return False
+
+    remaining = [record for record in records if not _matches(record)]
+    removed = len(records) - len(remaining)
+    if removed:
+        logger.info("Removed %s records from %s", removed, path)
+        _write_palm_database(path, header, remaining)
+    return removed

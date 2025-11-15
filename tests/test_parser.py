@@ -1,24 +1,52 @@
+import hashlib
+import shutil
 from pathlib import Path
 
 import pytest
 
 from wqv_viewer.parser import (
+    PalmRecord,
     WQVImageKind,
+    delete_wqv_pdb_records,
     load_wqv_image,
     load_wqv_monochrome,
     load_wqv_pdb,
+    _read_palm_database,
     _locate_monochrome_payload,
+    _write_palm_database,
 )
 
 
-@pytest.fixture(scope="module")
-def sample_pdr() -> Path:
-    return Path(__file__).parent / "data" / "000.40.8151044.pdr"
+@pytest.fixture()
+def sample_pdr(tmp_path) -> Path:
+    width = height = 120
+    nibble_count = (width * height + 1) // 2
+    payload = bytes((index % 256 for index in range(nibble_count)))
+    destination = tmp_path / "sample.pdr"
+    destination.write_bytes(payload)
+    return destination
 
 
-@pytest.fixture(scope="module")
-def sample_pdb() -> Path:
-    return Path(__file__).parent / "data" / "WQVLinkDB.PDB"
+@pytest.fixture()
+def sample_pdb(tmp_path) -> Path:
+    destination = tmp_path / "WQVLinkDB.PDB"
+    shutil.copyfile(Path(__file__).parent / "data" / "WQVLinkDB.PDB", destination)
+    return destination
+
+
+@pytest.fixture()
+def sample_pdb_with_empty_record(tmp_path) -> Path:
+    source = Path(__file__).parent / "data" / "WQVLinkDB.PDB"
+    header, records = _read_palm_database(source)
+    empty_record = PalmRecord(
+        attr=records[0].attr,
+        unique_id=1,
+        payload=b"",
+        index=len(records),
+    )
+    destination = tmp_path / "WQVLinkDB2.PDB"
+    _write_palm_database(destination, header, list(records) + [empty_record])
+    return destination
 
 
 def _reference_pixels(path: Path) -> bytes:
@@ -55,12 +83,22 @@ def test_autodetect_dispatches_to_monochrome(sample_pdr: Path) -> None:
 
 def test_load_wqv_pdb_extracts_records(sample_pdb: Path) -> None:
     images = load_wqv_pdb(sample_pdb)
-    assert len(images) == 3
+    assert len(images) == 13
 
-    expected_lookup = {
-        "8151044": Path(__file__).parent / "data" / "000.40.8151044.pdr",
-        "8151041": Path(__file__).parent / "data" / "001.40.8151041.pdr",
-        "8151042": Path(__file__).parent / "data" / "002.40.8151042.pdr",
+    expected_checksums = {
+        "8151044": "1c5c218387d5be3c11f2d6ead2544aa4",
+        "8151042": "d6d1b033e0e60b0c4d6d817ee45ae0eb",
+        "8151055": "659e94fadfd659d71a3260150bc344db",
+        "8151047": "c6a6be0b80460e11a6d820481d8f99d6",
+        "8151057": "01d29e1f9d7f4db265e4e17732e9399a",
+        "8151059": "a3a7f15d681b287755b8d7e9bf6c7c84",
+        "8151061": "50820fc8ce787dfccd7cbf52bf17fe18",
+        "8151063": "d7eb40a1011ea0ec6552dd81f5497999",
+        "8151065": "194508daafd78675642901ea28223426",
+        "8151067": "d0238efb3ef52be0dd79b1a7b7e40317",
+        "8151051": "d72d508199a7bd50baa8b77a3de36f0b",
+        "8151053": "648aa1654a10eb74ededd50b4d7f62d7",
+        "8151069": "d72d508199a7bd50baa8b77a3de36f0b",
     }
 
     seen_names = set()
@@ -68,11 +106,30 @@ def test_load_wqv_pdb_extracts_records(sample_pdb: Path) -> None:
         unique_id = image.metadata.get("record_unique_id")
         assert unique_id is not None
         assert image.metadata.get("record_index") == str(idx)
-        assert image.metadata.get("source_pdb", "").endswith("WQVLinkDB.PDB")
+        assert Path(image.metadata.get("source_pdb", "")).name == "WQVLinkDB.PDB"
         seen_names.add(image.path.name)
-
-        reference_path = expected_lookup[unique_id]
-        reference = load_wqv_monochrome(reference_path)
-        assert image.image.tobytes() == reference.image.tobytes()
+        digest = hashlib.md5(image.image.tobytes()).hexdigest()
+        assert digest == expected_checksums[unique_id]
 
     assert len(seen_names) == len(images)
+
+
+def test_load_wqv_pdb_skips_empty_records(sample_pdb_with_empty_record: Path) -> None:
+    images = load_wqv_pdb(sample_pdb_with_empty_record)
+    assert len(images) == 13
+    assert all(image.image.size == (120, 120) for image in images)
+    header, records = _read_palm_database(sample_pdb_with_empty_record)
+    assert len(records) == 13
+
+
+def test_delete_wqv_pdb_records(sample_pdb: Path) -> None:
+    images = load_wqv_pdb(sample_pdb)
+    first = images[0]
+    unique_id = int(first.metadata["record_unique_id"]) if first.metadata.get("record_unique_id") else None
+    index = int(first.metadata["record_index"]) if first.metadata.get("record_index") else None
+
+    removed = delete_wqv_pdb_records(sample_pdb, [(unique_id, index)])
+    assert removed == 1
+
+    remaining = load_wqv_pdb(sample_pdb)
+    assert len(remaining) == len(images) - 1

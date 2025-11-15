@@ -7,6 +7,7 @@ from .parser import (
     load_wqv_monochrome,
     load_wqv_color,
     load_wqv_pdb,
+    load_wqv_backup,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "load_wqv_monochrome",
     "load_wqv_color",
     "load_wqv_pdb",
+    "load_wqv_backup",
 ]

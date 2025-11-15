@@ -1,0 +1,185 @@
+
+=======================================================
+CASIO WQV Link for Palm OS(R) Handhelds Version 1.0
+=======================================================
+
+Warning! 
+This application is designed for use with the following Palm OS Handheld models only. Never try to use it with another type of device. 
+Applicable Models: Palm OS Handheld running Palm OS 3.3 or higher, or Visor Deluxe
+Important!
+
+1. All copyrights to this user documentation and all software-related rights shall revert to CASIO COMPUTER CO., LTD. 
+2. The contents of this user documentation are subject to change without notice. 
+
+3. CASIO assumes no responsibility for any loss or damages suffered by you through the use of this user documentation or application. 
+
+4. This user documentation assumes that you are already familiar with such basic Palm OS Handheld procedures as button operations, on-screen operations, etc. See the documentation that came with your Palm OS Handheld for information about its operation. 
+
+5. In addition to English alphanumeric characters, only the following can be sent to the Wrist Camera: & ' ( ) , - . / : _ ~ * space. 
+
+**********************************************************
+
+Establishing a Connection Between Your Wrist Camera and Palm OS Handheld
+
+1. Align the Wrist Camera and Palm OS Handheld IR ports so they are pointing at each other. The ports should be less than about 10cm apart and at an angle of less than about 15 degrees of each other. 
+
+2. On the Wrist Camera, enter the IR COM mode, select [PC] as the communication partner, and then press the front button. 
+
+3. Check to make sure that the message "REMOTE" is shown on the Wrist Camera display. 
+The "REMOTE" message will disappear from the Wrist Camera display after about five minutes if no data communication is performed during that time. If this happens, perform step 2 again.  
+
+4. Perform the data send or receive operations you want using "WQV Link for Palm OS Handhelds." Details of the various operations you can perform are provided below. 
+
+**********************************************************
+
+Using CASIO WQV Link for Palm OS Handhelds
+
+1. Buttons
+  1-1 Buttons Common to All Screens 
+  1-2 Enlarged View
+2. Menus
+  2-1 Tool Menu
+  2-2 Options Menu
+
+Before Getting Started... 
+* Install the file named WQV Link.prc on your Palm OS Handheld. See the documentation that came with your Palm OS device for details about installing applications. 
+
+* To start the application, go to [Applications] and tap the [WQVLink] icon. 
+
+* WQV Link for Palm OS Handhelds (WQV Link) has three views: a Thumbnail View, a List View, and an Enlarged View.  You can change the view using the buttons in the lower left corner of the display. 
+   Thumbnail View: This view displays thumbnails of four images on a single screen, along with recording dates and comment text (titles). 
+   List View: This view shows recording dates and comment text (titles) only. 
+   Enlarged View: This view shows a single 120 x 120-dot image, along with its recording date and title. With this view, you can also use the stylus to input data on the screen. 
+ * You can perform data communication with the Wrist Camera using the buttons at the bottom of the display in all three views. 
+
+------------------------------------------------------------
+1. Buttons
+
+1-1. Common to All Screens 
+
+# [Thumbnail] Button 
+Changes to the Thumbnail View. 
+
+# [List] Button 
+Changes to the List View.
+
+# [Enlarged] Button
+Changes to the Enlarged View.
+
+# [Send] Button 
+Sends the image that is selected on the Palm OS Handheld to the Wrist Camera. 
+Tapping this button causes the following message to appear on the Palm OS Handheld: "Put the watch in data transfer mode and point the two infrared ports towards each other." Perform the steps as instructed, and then tap the [OK] button on the Palm OS Handheld screen. The image is stored in Wrist Camera memory after the send operation is complete. 
+
+# [Recv] Button 
+Imports the image that is on the Wrist Camera display.   Tapping this button causes the following message to appear on the Palm OS Handheld: "Put the watch in data transfer mode and point the two infrared ports towards each other." Perform the steps as instructed, and then tap the [OK] button on the Palm OS Handheld screen. The image is stored as a WQV Link images after the receive operation is complete. 
+
+# [<] Button 
+Use this button to scroll through images in Wrist Camera memory to find the one you want to import. Each tap of this button while the Wrist Camera is connected scrolls back one image. 
+
+# [<<] Button 
+Each tap of this button scrolls back through images in Wrist Camera memory five at a time. Holding down this button scrolls at high speed. 
+
+# [>] Button 
+Use this button to scroll through images in Wrist Camera memory to find the one you want to import. Each tap of this button while the Wrist Camera is connected scrolls forward one image. 
+
+# [>>] Button 
+Each tap of this button scrolls forward through images in Wrist Camera memory five at a time. Holding down this button scrolls at high speed. 
+
+# Category 
+The category name is shown in the upper right corner of the screen. Categories are the same as the standard Palm OS software categories. You can select the category you want and even edit categories. Selecting the [ALL] category displays all images. 
+To change the category of an image, tap the [Details] button on the Enlarged View. 
+
+# Hardware Buttons 
+You can use the up and down keys at the bottom of the Palm OS Handheld for scrolling and to select images. 
+  Thumbnail View:  Pressing the buttons scrolls in 4-image groups. These buttons do not perform any operation when there are four or fewer images. 
+  List View:  Pressing the buttons scrolls in 10-image groups. These buttons do not perform any operation when there are 11 or fewer images. 
+  Enlarged View:  Press the buttons scrolls through images, one at a time. 
+* The values in the upper left corner of the screen show the number of the currently displayed image, and the total number of images.
+
+
+1-2 Enlarged View
+
+# Palette 
+Use the palette to select colors when performing stylus input on an image. Colors are available in 16 gradations, and a dot on the edge of the palette indicates the currently selected color. You can select a color from the palette by tapping on the palette, or by picking up color from the image using the eyedropper tool. 
+
+# [Pencil] Icon 
+Tapping this icon selects a pencil tool that you can use to draw on an image. The pencil line is the drawn in the color that is selected on the palette. The width of the pencil line is one dot. The pencil icon is highlighted on the display while the pencil tool is selected. 
+
+# [Brush] Icon 
+Tapping this icon selects a brush tool that you can use to paint on an image. The brush line is the drawn in the color that is selected on the palette. The width of the brush line is two dots, and the brush icon is highlighted on the display while the brush tool is selected. 
+
+# [Eraser] Icon 
+Tapping this icon selects an erasure tool that you can use to erase image data. Any area of the image where you drag the stylus while the eraser tool is selected becomes white. The width of the eraser line is one dot, and the eraser icon is highlighted on the display while the eraser tool is selected. 
+
+# [Eyedropper] Icon 
+Tapping this icon selects an eyedropper tool, which you can use to pickup colors for an image and use the picked up color as the pencil and brush color. Tapping an image while the eyedropper tool is selected selects changes the palette color to the color at the location where you tap. 
+
+# [NEW] Button 
+Tap this button to create new image data. The background color is the currently selected palette color. You can send text and graphics you input using the stylus to the Wrist Camera by tapping the [Send] button. 
+
+# [Details] Button 
+Tap this button when you want to change the displayed image's comment text (title), recording date, category, and private status.  You can edit these settings by tapping the title and recording date at the top of the Enlarged View. 
+  Title: You can input comment text here. 
+The Wrist Camera supports English alphanumeric characters and a limited number of other punctuation symbols. 
+  Date, Time: Tap here to edit the recording date and time. 
+  Category: Tap here to change the category. 
+  Private: Selecting the [Private] option controls images display in accordance with the Palm OS [Security] settings. 
+  [Delete] Button 
+Tapping this button causes the message "Delete current Picture?" to appear. Tap the [OK] button to delete the current image. 
+
+------------------------------------------------------------
+
+2. Menus
+
+2-1 Tool Menu
+
+# Receive All
+Imports all image data that is in Wrist Camera memory.   
+
+# Send Quit
+Terminates data communication with the Wrist Camera. Executing this command causes the Wrist Camera to exit the REMOTE mode and return to the IR COM mode. 
+
+# Send Time
+Adjusts the Wrist Camera date and time settings using the Palm OS Handheld date and time settings. Note that the Wrist Camera seconds count is not adjusted. 
+
+# Beam Picture to Palm
+Sends the selected image to another Palm OS device. The other device will not be able to receive the images unless it has WQV Link installed. You can also send the WQV Link application itself to another Palm OS device
+via infrared. 
+
+# Beam Category to Palm
+Sends all images that belong to the current category (whose name is shown in the upper right corner of the screen) to another Palm OS device. The send operation is not performed if there the current category does not contain any data. 
+
+# Export to FireViewer
+Saves the current image as a FireViewer (image viewing application by Firepad, Inc.) format file. FireViewer format files can be viewed using FireViewer. 
+
+# Delete All in Category
+Deletes all images that belong to the current category (whose name is shown in the upper right corner of the screen). 
+
+# Undo All
+Undoes all stylus input edits on the Enlarged View screen and returns the image to its initial state. 
+
+
+2-2 Options Menu
+
+# Preferences
+Opens Preferance window.
+  Sort by: Use these options to specify whether images should be sorted by date and title, by title and date, or manually. Note that manual sorting is possible only on the List View. 
+  Show Date in List View: Select this option when you want date data included on the List View. 
+  Show Time in List View: Select this option when you want time data included on the List View. 
+
+# Security
+Use these settings to configure display of private items. These settings are valued for Palm OS 3.5 or greater. 
+
+# About WQV Link
+Displays information about WQV Link. 
+
+
+**********************************************************
+(c)Copyright 2001 CASIO COMPUTER CO., LTD. All rights reserved.
+* Except for the purpose of normal use of the application or for the purpose of backing up the application, no part the application or this documentation may be reproduced in any form without the express written consent of CASIO COMPUTER CO., LTD. 
+* Palm and Palm OS are registered trademarks or trademarks of Palm, Inc. 
+* Handspring and VISOR are registered trademarks or trademarks of Handspring, Inc. 
+* Other company, product and service names used herein may also be trademarks or service names of others. 
+**********************************************************
+
+
