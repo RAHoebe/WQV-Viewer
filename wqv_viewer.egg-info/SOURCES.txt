@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+tests/test_gui_smoke.py
+tests/test_parser.py
+tests/test_upscaling.py
+wqv_viewer/__init__.py
+wqv_viewer/__main__.py
+wqv_viewer/gui.py
+wqv_viewer/hypir.py
+wqv_viewer/parser.py
+wqv_viewer/upscaling.py
+wqv_viewer.egg-info/PKG-INFO
+wqv_viewer.egg-info/SOURCES.txt
+wqv_viewer.egg-info/dependency_links.txt
+wqv_viewer.egg-info/requires.txt
+wqv_viewer.egg-info/top_level.txt
