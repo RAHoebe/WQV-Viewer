@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
@@ -14,6 +15,34 @@ from PIL import Image
 
 
 logger = logging.getLogger(__name__)
+
+PALM_EPOCH = datetime(1904, 1, 1, tzinfo=timezone.utc)
+
+
+def _format_palm_timestamp(raw_value: int) -> Optional[str]:
+    if raw_value <= 0:
+        return None
+    try:
+        moment = PALM_EPOCH + timedelta(seconds=raw_value)
+    except OverflowError:
+        return None
+    if moment.year < 1990:
+        return None
+    try:
+        localized = moment.astimezone()
+    except OSError:
+        localized = moment
+    if localized.tzinfo is not None:
+        localized = localized.replace(tzinfo=None)
+    return localized.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_file_timestamp(raw_value: float) -> Optional[str]:
+    try:
+        moment = datetime.fromtimestamp(raw_value)
+    except (OSError, OverflowError, ValueError):
+        return None
+    return moment.strftime("%Y-%m-%d %H:%M:%S")
 
 
 class WQVImageKind(str, Enum):
@@ -142,6 +171,29 @@ def load_wqv_pdb(path: Path | str, *, width: int = 120, height: int = 120) -> Li
     path = Path(path)
     header, records = _read_palm_database(path)
 
+    creation_time = struct.unpack_from(">I", header, 32)[0]
+    modification_time = struct.unpack_from(">I", header, 36)[0]
+    backup_time = struct.unpack_from(">I", header, 40)[0]
+    fallback_timestamp = next(
+        (
+            candidate
+            for candidate in (
+                _format_palm_timestamp(creation_time),
+                _format_palm_timestamp(modification_time),
+                _format_palm_timestamp(backup_time),
+            )
+            if candidate
+        ),
+        None,
+    )
+
+    try:
+        stat_result = path.stat()
+    except OSError:
+        stat_result = None
+    if fallback_timestamp is None and stat_result is not None:
+        fallback_timestamp = _format_file_timestamp(stat_result.st_ctime)
+
     cleaned_records: List[PalmRecord] = [record for record in records if record.payload]
     removed = len(records) - len(cleaned_records)
     if removed:
@@ -175,6 +227,12 @@ def load_wqv_pdb(path: Path | str, *, width: int = 120, height: int = 120) -> Li
                 extra_metadata=record_metadata,
             )
         )
+
+    if fallback_timestamp:
+        for image in images:
+            if not image.captured_at:
+                image.captured_at = fallback_timestamp
+                image.metadata.setdefault("captured_at", fallback_timestamp)
 
     return images
 
