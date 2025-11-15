@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
@@ -573,6 +574,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("WQV Wristcam Viewer")
         self.resize(1100, 720)
+        self._apply_window_icon()
 
         self.browser = ImageBrowser()
         self.setCentralWidget(self.browser)
@@ -585,23 +587,42 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
 
     # ---------------------------------------------------------------- actions
+    def _resources_dir(self) -> Path:
+        return Path(__file__).resolve().parent.parent / "resources"
+
     def _resource_icon(self, name: str) -> QIcon:
-        resources_dir = Path(__file__).resolve().parent.parent / "resources"
-        return QIcon(str(resources_dir / name))
+        icon_path = self._resources_dir() / name
+        if not icon_path.exists():
+            return QIcon()
+        return QIcon(str(icon_path))
+
+    def _app_icon(self) -> Optional[QIcon]:
+        for candidate in ("app.ico", "app.png"):
+            icon = self._resource_icon(candidate)
+            if not icon.isNull():
+                return icon
+        return None
+
+    def _apply_window_icon(self) -> None:
+        icon = self._app_icon()
+        if icon is not None:
+            self.setWindowIcon(icon)
 
     def _create_actions(self) -> None:
         self.open_pdb_action = QAction("Open WQVLinkDB…", self)
-        self.open_pdb_action.setIcon(self._resource_icon("download.gif"))
+        self.open_pdb_action.setIcon(self._resource_icon("open.png"))
         self.open_pdb_action.triggered.connect(self.open_pdb)
 
         self.export_action = QAction("Export Selected…", self)
+        self.export_action.setIcon(self._resource_icon("export.png"))
         self.export_action.triggered.connect(self.export_selected)
 
         self.clear_action = QAction("Clear", self)
+        self.clear_action.setIcon(self._resource_icon("clear.png"))
         self.clear_action.triggered.connect(self.browser.clear)
 
         self.exit_action = QAction("Exit", self)
-        self.exit_action.setIcon(self._resource_icon("exit.gif"))
+        self.exit_action.setIcon(self._resource_icon("exit.png"))
         self.exit_action.triggered.connect(self.close)
 
     def _build_menus(self) -> None:
@@ -686,6 +707,23 @@ class MainWindow(QMainWindow):
 
 def run() -> None:
     app = QApplication.instance() or QApplication([])
+
+    resources_dir = Path(__file__).resolve().parent.parent / "resources"
+    for candidate in ("app.ico", "app.png"):
+        icon_path = resources_dir / candidate
+        if icon_path.exists():
+            app_icon = QIcon(str(icon_path))
+            if not app_icon.isNull():
+                app.setWindowIcon(app_icon)
+                break
+
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("RAHoebe.WQVViewer")
+        except Exception:  # pragma: no cover - Windows only optional call
+            logger.debug("Failed to set Windows AppUserModelID", exc_info=True)
     window = MainWindow()
     window.show()
     app.exec()

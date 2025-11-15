@@ -11,24 +11,26 @@ Qt 6 desktop interface.
 - ✅ Automatic clean-up of the corrupt ``DBLK`` chunk found in colour JPEG exports
 - ✅ Understands ``WQVLinkDB.PDB`` archives and extracts every embedded frame
 - ✅ Responsive PyQt6 UI with thumbnail list, dual-pane preview, metadata pane, and PNG export
-- ✅ Built-in 2×/3×/4× upscalers (nearest, bilinear, bicubic, Lanczos) plus an AI option powered by Real-ESRGAN (2×/4×) with manual GPU/CPU selection and automatic fallback
-- ✅ Reuses the original toolbar iconography for a touch of nostalgia
+- ✅ Built-in 2×/3×/4×/6x upscalers (nearest, bilinear, bicubic, Lanczos) plus an AI option powered by Real-ESRGAN (2×/4×) with manual GPU/CPU selection and automatic fallback
+- ✅ Custom toolbar and application icons inspired by the original wrist camera aesthetic
 - ✅ Automated unit tests covering the parser and a GUI smoke test
+
+The AI upscaling pipeline builds on the upstream [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) project and bundles its pretrained weights for convenience.
 
 ## Project layout
 
 ```
-python_viewer/
+WQV-Viewer/
 ├── README.md               # This document
 ├── pyproject.toml          # Project metadata & dependencies
-├── resources/              # Toolbar icons copied from the Java viewer
+├── resources/              # Custom toolbar & application icons
 ├── tests/                  # Pytest test-suite and sample assets
 └── wqv_viewer/             # Runtime package (parser + GUI)
 ```
 
 ## Getting started
 
-Ensure you have Python 3.9+ with pip available. From the ``python_viewer``
+Ensure you have Python 3.9+ with pip available. From the ``WQV-Viewer``
 folder install the package in editable mode (this pulls in Pillow, PyQt6 and
 pytest):
 
@@ -38,7 +40,7 @@ python -m pip install -e .[dev]
 
 > ℹ️ The installation pulls in Real-ESRGAN and PyTorch for the AI upscaler.
 > The first time you pick the AI method the pretrained weights (≈70 MB) are
-> downloaded to ``python_viewer/models/realesrgan`` and re-used afterwards. The
+> downloaded to ``WQV-Viewer/models/realesrgan`` and re-used afterwards. The
 > downloader now prefers the official GitHub release assets and falls back to
 > Hugging Face if required. If you are offline, grab the models you need from
 > the release page (for example
@@ -91,7 +93,7 @@ upscaled preview on the right. Pick a method (nearest/bilinear/bicubic/Lanczos
 or the AI-powered Real-ESRGAN model), a scale factor (2×, 3×, or 4×), and now a
 device preference (Auto/GPU/CPU) from the toolbar above the previews to refresh
 the upscale. The Real-ESRGAN weights are cached locally after the first run
-under ``python_viewer/models/realesrgan``.
+under ``WQV-Viewer/models/realesrgan``.
 The AI dropdown now exposes multiple Real-ESRGAN flavours so you can pick the
 one that suits your footage:
 

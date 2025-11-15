@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import contextlib
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from collections import defaultdict
@@ -513,7 +515,8 @@ class RealESRGANUpscaler:
             attempt = self._extract_attempt(details)
 
             try:
-                sr, _ = upsampler.enhance(lr, outscale=scale)
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    sr, _ = upsampler.enhance(lr, outscale=scale)
             except Exception as exc:  # pragma: no cover - runtime fallback path
                 if attempt is not None:
                     self._failed_attempts[cache_key].add(attempt)
