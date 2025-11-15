@@ -1,6 +1,6 @@
 # WQV Wristcam Viewer (PyQt6)
 
-A modern Python reimplementation of the Casio WQV wrist camera desktop viewer.
+A modern Python implementation of a Casio WQV wrist camera desktop viewer.
 It can decode the monochrome ``.pdr``/``.bin`` dumps produced by WQV-1/2 models
 and the colour JPEG exports produced by later WQV cameras, presenting them in a
 Qt 6 desktop interface.
@@ -113,9 +113,4 @@ python -m pytest
 The suite uses the sample ``.pdr`` file under ``tests/data`` and runs a headless
 (``QT_QPA_PLATFORM=offscreen``) smoke test for the Qt main window.
 
-## Next steps
 
-- Flesh out metadata decoding (timestamps, titles) by reverse-engineering the
-  header segment.
-- Add a live watch-communication stub if a serial protocol capture becomes
-  available.
