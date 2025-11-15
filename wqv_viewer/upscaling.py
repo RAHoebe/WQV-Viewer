@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import contextlib
 import io
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from collections import defaultdict
@@ -16,7 +17,7 @@ from PIL import Image
 # Scale definitions
 
 ALLOWED_CONVENTIONAL_SCALES: Tuple[int, ...] = (2, 3, 4, 5, 6)
-ALLOWED_AI_SCALES: Tuple[int, ...] = (2, 4)
+ALLOWED_AI_SCALES: Tuple[int, ...] = (2, 4, 8)
 
 
 @dataclass(frozen=True)
@@ -125,7 +126,7 @@ _REALESRGAN_VARIANTS: Tuple[RealESRGANVariantSpec, ...] = (
                         ),
                     ),
                 ),
-                arch="rrdbnet",
+                arch="sber_rrdbnet",
                 arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2),
             ),
             4: RealESRGANModelSpec(
@@ -141,6 +142,48 @@ _REALESRGAN_VARIANTS: Tuple[RealESRGANVariantSpec, ...] = (
                 ),
                 arch="rrdbnet",
                 arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4),
+            ),
+        },
+    ),
+    RealESRGANVariantSpec(
+        id="realesrgan-sber",
+        label="Real-ESRGAN (Sber 2×/4×/8×)",
+        models={
+            2: RealESRGANModelSpec(
+                weights=(
+                    RealESRGANWeightSpec(
+                        "RealESRGAN_sber_x2",
+                        (
+                            "https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x2.pth",
+                        ),
+                    ),
+                ),
+                arch="rrdbnet",
+                arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2),
+            ),
+            4: RealESRGANModelSpec(
+                weights=(
+                    RealESRGANWeightSpec(
+                        "RealESRGAN_sber_x4",
+                        (
+                            "https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x4.pth",
+                        ),
+                    ),
+                ),
+                arch="sber_rrdbnet",
+                arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4),
+            ),
+            8: RealESRGANModelSpec(
+                weights=(
+                    RealESRGANWeightSpec(
+                        "RealESRGAN_sber_x8",
+                        (
+                            "https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x8.pth",
+                        ),
+                    ),
+                ),
+                arch="sber_rrdbnet",
+                arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=8),
             ),
         },
     ),
@@ -280,9 +323,12 @@ class RealESRGANUpscaler:
         try:
             _ensure_torchvision_functional_tensor()
             from realesrgan import RealESRGANer  # type: ignore
-            from basicsr.archs.rrdbnet_arch import RRDBNet  # type: ignore
+            from basicsr.archs.rrdbnet_arch import RRDBNet, RRDB  # type: ignore
             from realesrgan.archs.srvgg_arch import SRVGGNetCompact  # type: ignore
+            from basicsr.archs import arch_util as basicsr_arch_util  # type: ignore
             from basicsr.utils.download_util import load_file_from_url  # type: ignore
+            from torch import nn  # type: ignore
+            from torch.nn import functional as F  # type: ignore
             import torch  # type: ignore
         except ImportError as exc:  # pragma: no cover - optional dependency missing
             self._init_error = (
@@ -291,10 +337,70 @@ class RealESRGANUpscaler:
             )
             raise RuntimeError(self._init_error) from exc
 
+        default_init_weights = basicsr_arch_util.default_init_weights  # type: ignore[attr-defined]
+        make_layer = basicsr_arch_util.make_layer  # type: ignore[attr-defined]
+        pixel_unshuffle = basicsr_arch_util.pixel_unshuffle  # type: ignore[attr-defined]
+
+        class SberRRDBNet(nn.Module):  # pragma: no cover - thin wrapper around upstream model
+            def __init__(
+                self,
+                num_in_ch: int,
+                num_out_ch: int,
+                *,
+                scale: int = 4,
+                num_feat: int = 64,
+                num_block: int = 23,
+                num_grow_ch: int = 32,
+            ) -> None:
+                super().__init__()
+                self.scale = scale
+                in_channels = num_in_ch
+                if scale == 2:
+                    in_channels = num_in_ch * 4
+                elif scale == 1:
+                    in_channels = num_in_ch * 16
+
+                self.conv_first = nn.Conv2d(in_channels, num_feat, 3, 1, 1)
+                self.body = make_layer(RRDB, num_block, num_feat=num_feat, num_grow_ch=num_grow_ch)
+                self.conv_body = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+                self.conv_up1 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+                self.conv_up2 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+                if scale == 8:
+                    self.conv_up3 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+                else:
+                    self.conv_up3 = None
+                self.conv_hr = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+                self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+                default_init_weights([self.conv_first, self.conv_body, self.conv_up1, self.conv_up2, self.conv_hr], 0.1)
+                default_init_weights([self.conv_last], 0.1)
+                if self.conv_up3 is not None:
+                    default_init_weights([self.conv_up3], 0.1)
+                self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+            def forward(self, x):
+                if self.scale == 2:
+                    feat = pixel_unshuffle(x, scale=2)
+                elif self.scale == 1:
+                    feat = pixel_unshuffle(x, scale=4)
+                else:
+                    feat = x
+
+                feat = self.conv_first(feat)
+                body_feat = self.conv_body(self.body(feat))
+                feat = feat + body_feat
+
+                feat = self.lrelu(self.conv_up1(F.interpolate(feat, scale_factor=2, mode="nearest")))
+                feat = self.lrelu(self.conv_up2(F.interpolate(feat, scale_factor=2, mode="nearest")))
+                if self.conv_up3 is not None:
+                    feat = self.lrelu(self.conv_up3(F.interpolate(feat, scale_factor=2, mode="nearest")))
+                out = self.conv_last(self.lrelu(self.conv_hr(feat)))
+                return out
+
         self._backend = {
             "RealESRGANer": RealESRGANer,
             "RRDBNet": RRDBNet,
             "SRVGGNetCompact": SRVGGNetCompact,
+            "SberRRDBNet": SberRRDBNet,
             "load_file_from_url": load_file_from_url,
             "torch": torch,
         }
@@ -306,20 +412,50 @@ class RealESRGANUpscaler:
             destination = self._model_dir / f"{weight.model_name}.pth"
             if not destination.exists():
                 errors: List[str] = []
+                downloaded = False
                 for url in weight.urls:
                     try:
                         logger.info("Downloading %s from %s", weight.model_name, url)
-                        loader(url, model_dir=str(self._model_dir), progress=True)
-                        break
+                        downloaded_path = loader(
+                            url,
+                            model_dir=str(self._model_dir),
+                            progress=True,
+                        )
+                        candidate_paths: List[Path] = []
+                        if downloaded_path:
+                            candidate_paths.append(Path(downloaded_path))
+                        candidate_paths.append(self._model_dir / Path(url).name)
+                        for candidate in candidate_paths:
+                            if candidate.exists():
+                                if candidate.resolve() != destination.resolve():
+                                    shutil.move(str(candidate), destination)
+                                downloaded = True
+                                break
+                        if not downloaded and destination.exists():
+                            downloaded = True
+                        if downloaded:
+                            break
                     except Exception as exc:  # pragma: no cover - network variability
                         errors.append(f"{url}: {exc}")
                         logger.warning(
                             "Failed to download %s from %s: %s", weight.model_name, url, exc
                         )
-                else:
+                if not downloaded:
                     raise RuntimeError(
                         "Unable to download Real-ESRGAN weights. Tried:\n" + "\n".join(errors)
                     )
+            if destination.exists():
+                try:  # Normalize plain state dicts into the expected wrapper.
+                    import torch  # type: ignore
+
+                    loadnet = torch.load(destination, map_location="cpu")
+                except Exception:  # pragma: no cover - torch optional or corrupted file
+                    pass
+                else:
+                    if isinstance(loadnet, dict) and not any(
+                        key in loadnet for key in ("params", "params_ema")
+                    ):
+                        torch.save({"params": loadnet}, destination)
             paths.append(destination)
         return paths
 
@@ -429,6 +565,8 @@ class RealESRGANUpscaler:
 
             if arch_type == "rrdbnet":
                 model = backend["RRDBNet"](**spec.arch_args)
+            elif arch_type == "sber_rrdbnet":
+                model = backend["SberRRDBNet"](**spec.arch_args)
             elif arch_type == "srvgg":
                 model = backend["SRVGGNetCompact"](**spec.arch_args)
             else:  # pragma: no cover - defensive guard
@@ -493,7 +631,11 @@ class RealESRGANUpscaler:
 
     def upscale(self, image: Image.Image, scale: int) -> Image.Image:
         if not self.supports_scale(scale):
-            raise ValueError("Real-ESRGAN only provides 2× and 4× models.")
+            available = ", ".join(str(s) for s in self.supported_scales())
+            raise ValueError(
+                f"Real-ESRGAN variant '{self.label}' does not support {scale}× upscaling. "
+                f"Available scales: {available}."
+            )
         try:
             import numpy as np  # type: ignore
         except ImportError as exc:  # pragma: no cover - optional dependency guard
