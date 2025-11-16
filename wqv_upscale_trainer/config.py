@@ -34,6 +34,8 @@ class TrainerConfig:
     val_interval: int = 5000
     checkpoint_interval: int = 10_000
     log_interval: int = 100
+    image_log_interval: int = 2000
+    image_log_max_samples: int = 4
     resume_from: Path | None = None
     perceptual_weight: float = 0.1
     l1_weight: float = 1.0

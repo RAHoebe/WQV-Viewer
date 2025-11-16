@@ -142,4 +142,6 @@ def build_generator(scale: int, *, spec: GeneratorSpec | None = None) -> nn.Modu
 
 def save_generator(generator: nn.Module, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"params": generator.state_dict()}, path)
+    state = generator.state_dict()
+    cpu_state = {name: tensor.detach().cpu() for name, tensor in state.items()}
+    torch.save({"params": cpu_state}, path)

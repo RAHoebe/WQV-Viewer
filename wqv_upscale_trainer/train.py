@@ -6,6 +6,7 @@ import json
 import logging
 from contextlib import contextmanager
 from dataclasses import asdict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Dict, Iterator, Optional, Sequence
 
@@ -15,6 +16,7 @@ from torch import nn
 from torch.cuda import amp
 from torch.utils.data import DataLoader
 from torchvision import models as tv_models
+from torchvision.utils import make_grid
 from tqdm.auto import tqdm
 
 from .config import TrainerConfig
@@ -202,6 +204,70 @@ def _save_checkpoint(
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, path)
     logger.info("Checkpoint written to %s", path)
+    deploy_path = path.with_name(f"{path.stem}_deploy{path.suffix}")
+    try:
+        _write_deployable_checkpoint(payload, deploy_path)
+    except Exception:  # pragma: no cover - defensive guard
+        logger.warning("Failed to write deployable checkpoint copy to %s", deploy_path, exc_info=True)
+
+
+def _write_deployable_checkpoint(payload: Mapping[str, object], destination: Path) -> None:
+    state = _extract_deployable_state(payload)
+    if state is None:
+        logger.debug("Skip deployable export; no suitable state dict found.")
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"params": state}, destination)
+    logger.info("Deployable checkpoint written to %s", destination)
+
+
+def _extract_deployable_state(payload: Mapping[str, object]) -> Optional[Dict[str, torch.Tensor]]:
+    candidate_keys = ("ema", "params_ema", "generator", "params")
+    for key in candidate_keys:
+        candidate = payload.get(key)
+        if isinstance(candidate, Mapping):
+            state: Dict[str, torch.Tensor] = {}
+            for name, tensor in candidate.items():
+                if isinstance(tensor, torch.Tensor):
+                    state[name] = tensor.detach().cpu()
+            if state:
+                return state
+    return None
+
+
+def _log_tensorboard_images(
+    writer,
+    *,
+    step: int,
+    lr: torch.Tensor,
+    sr: torch.Tensor,
+    hr: torch.Tensor,
+    scale: int,
+    max_samples: int,
+) -> None:
+    import torch.nn.functional as F  # local import to avoid polluting module namespace
+
+    batch = lr.size(0)
+    if batch == 0:
+        return
+    count = min(max_samples, batch)
+    with torch.no_grad():
+        lr_vis = F.interpolate(lr[:count], scale_factor=scale, mode="nearest")
+        sr_vis = sr[:count]
+        hr_vis = hr[:count]
+        images = []
+        for idx in range(count):
+            images.extend(
+                [
+                    lr_vis[idx].detach().cpu().clamp(0.0, 1.0),
+                    sr_vis[idx].detach().cpu().clamp(0.0, 1.0),
+                    hr_vis[idx].detach().cpu().clamp(0.0, 1.0),
+                ]
+            )
+        if not images:
+            return
+        grid = make_grid(torch.stack(images, dim=0), nrow=3)
+        writer.add_image("comparison/lr_sr_hr", grid, step)
 
 
 def train_model(config: TrainerConfig) -> None:
@@ -386,6 +452,16 @@ def train_model(config: TrainerConfig) -> None:
             writer.add_scalar("train/l1", loss_l1_value, global_step)
             writer.add_scalar("train/perceptual", loss_perc_value, global_step)
             writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
+            if config.image_log_interval > 0 and global_step % config.image_log_interval == 0:
+                _log_tensorboard_images(
+                    writer,
+                    step=global_step,
+                    lr=lr.detach(),
+                    sr=sr.detach(),
+                    hr=hr.detach(),
+                    scale=config.scale,
+                    max_samples=config.image_log_max_samples,
+                )
 
         if config.val_interval > 0 and val_loader is not None and (step + 1) % config.val_interval == 0:
             with ema.average_parameters(generator):

@@ -97,6 +97,41 @@ pane shows the original frame alongside the selected upscaled preview and the
 decoded metadata that is currently captured (raw size and data offset for
 monochrome dumps).
 
+### Moving photos from the watch to your PC (Palm OS bridge)
+
+If you do not have Casio's original PAD-2 infrared cradle, the most reliable
+workflow is to offload images to a Palm handheld over infrared, then sync that
+database back to your computer. The outline below combines the official Casio
+Palm app with modern community tooling such as
+[WQV_PDB_Tools](https://github.com/nnnn2cat/WQV_PDB_Tools) and the field notes in
+[Sam Mortimer's deep dive](https://segamadebaddecisions.wordpress.com/2024/06/30/the-casio-wrist-camera-wqv-1-absolutely-unwilling-to-share-its-secrets-with-a-pc/).
+
+1. **Prepare a Palm with IR** – Palm m100/m105/m125 or any Palm OS 3.3–4.x
+  device with an infrared window works well. Install Palm Desktop/HotSync on
+  your PC (Windows XP-era versions run fine inside a VM if you prefer).
+2. **Install WQV Link on the Palm** – Download Casio's ``wqvlinkpalm11.lzh``
+  archive (mirrors are linked in the blog post), extract the ``.prc``/
+  ``.pdb`` payload, add them to the Palm Install Tool, then HotSync. A new
+  ``WQV Link`` icon should appear on the handheld.
+3. **Beam the photos from the watch** – On the Palm, open ``WQV Link`` and tap
+  **Tools → Receive All** so it begins listening. On the watch, align the IR
+  window with the Palm and choose ``DATA COMM → SEND → OTHER DEVICE`` (or the
+  equivalent ``Send All`` entry). Keep the devices steady until the Palm shows
+  a completion dialog; a full 100-shot transfer takes a couple of minutes.
+4. **HotSync back to the desktop** – Run another HotSync. Palm Desktop writes a
+  ``WQVLinkDB.PDB`` backup under
+  ``%USERPROFILE%\Documents\Palm OS Desktop\<HotSyncName>\Backup`` (colour
+  watches will emit per-image ``CASIJPG*.PDB`` files instead).
+5. **Open the database in WQV-Viewer** – Point the viewer at the backed-up
+  ``.pdb`` file via **File → Open WQVLinkDB…**. The monochrome frames will
+  unpack instantly. If you want standalone bitmaps on disk, you can also drop
+  the same ``.pdb`` into WQV_PDB_Tools and batch-export BMP/PNG files.
+6. **Optional: Palm OS Emulator** – When you need screenshots with the Palm UI
+  overlay, follow the blog guide to load ``WQV Link`` and your ``.pdb`` into
+  Palm OS Emulator (POEM) using a Palm OS 3.5 ROM, then capture BMPs with
+  ``Alt+M``. This is handy for documentation, but unnecessary for normal
+  extraction workflows now that WQV-Viewer handles the decoding directly.
+
 ### Upscaling controls
 
 Every image is shown twice: the original resolution on the left and an
@@ -140,13 +175,13 @@ wqv-upscale-trainer path/to/source-images run-workspace --scale 4 --steps 100000
 
 **3. Monitor progress**
 - ``trainer.log`` captures per-step losses and validation PSNR.
-- If ``--tensorboard`` is enabled, launch ``tensorboard --logdir run-workspace/tensorboard`` to visualise metrics.
-- Intermediate checkpoints live under ``run-workspace/checkpoints`` in case you want to resume with ``--resume-from``.
+- If ``--tensorboard`` is enabled, launch ``tensorboard --logdir run-workspace/tensorboard`` to visualise metrics. Alongside the scalar curves, the trainer now publishes a ``comparison/lr_sr_hr`` image grid at the configured interval so you can inspect low-resolution crops, current super-res outputs, and ground-truth targets side-by-side. Adjust ``--image-log-interval`` and ``--image-log-max-samples`` to tune how often and how many examples are emitted.
+- Intermediate checkpoints live under ``run-workspace/checkpoints`` in case you want to resume with ``--resume-from``. Each checkpoint is accompanied by a ``*_deploy.pth`` sibling that already contains the slim ``{"params": ...}`` payload ready for the viewer.
 
 **4. Install the trained model in the viewer**
 - The final EMA export is written to ``run-workspace/models/wqv_neosr_x4.pth``.
 - Copy that file into ``models/realesrgan`` (overwriting the previous version if present).
-- The viewer normalises the checkpoint the first time it loads **WQV NeoSR (custom x4)**, shrinking it to the lightweight ``params`` payload and reusing it for subsequent sessions.
+- The exported weights are already stored in the slim ``{"params": ...}`` format, so the viewer can load **WQV NeoSR (custom x4)** without further conversion.
 - If you maintain multiple variants, store them beside the stock weights and swap them in/out or rename ``wqv_neosr_x4.pth`` before launching the viewer.
 - Run ``wqv-upscale-trainer --help`` for the full list of configuration switches, including dataset splits, EMA decay, and gradient clipping.
 

@@ -39,6 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--val-interval", type=int, default=5000, help="Validation interval in steps (default: 5000).")
     parser.add_argument("--checkpoint-interval", type=int, default=10_000, help="Checkpoint interval in steps (default: 10000).")
     parser.add_argument("--log-interval", type=int, default=100, help="Logging interval in steps (default: 100).")
+    parser.add_argument("--image-log-interval", type=int, default=2000, help="TensorBoard image logging interval in steps (default: 2000).")
+    parser.add_argument("--image-log-max-samples", type=int, default=4, help="Maximum samples per TensorBoard image grid (default: 4).")
     parser.add_argument("--resume", type=Path, default=None, help="Checkpoint path to resume training from.")
     parser.add_argument("--base-resolution", type=int, default=120, help="Target WQV base resolution (default: 120).")
     parser.add_argument("--tensorboard", action="store_true", help="Enable TensorBoard logging under the workspace directory.")
@@ -70,6 +72,8 @@ def parse_config(argv: list[str] | None = None) -> TrainerConfig:
         val_interval=args.val_interval,
         checkpoint_interval=args.checkpoint_interval,
         log_interval=args.log_interval,
+        image_log_interval=max(0, args.image_log_interval),
+        image_log_max_samples=max(1, args.image_log_max_samples),
         resume_from=args.resume,
         perceptual_weight=args.perceptual_weight,
         l1_weight=args.l1_weight,
