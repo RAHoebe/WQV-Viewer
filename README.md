@@ -107,17 +107,17 @@ combines the official Casio Palm app with the field notes in
 1. **Prepare a Palm with IR** – Palm m100/m105/m125 or any Palm OS 3.3–4.x
   device with an infrared window works well. Install Palm Desktop/HotSync on
   your PC (Windows XP-era versions run fine inside a VM if you prefer).
-2. **Install WQV Link on the Palm** – Download Casio's ``wqvlinkpalm11.lzh``
-  archive (mirrors are linked in the blog post), extract the ``.prc``/
-  ``.pdb`` payload, add them to the Palm Install Tool, then HotSync. A new
-  ``WQV Link`` icon should appear on the handheld.
+2. **Install WQV Link on the Palm** – The repo bundles the official installer
+  under ``tools/wqvlinkpalm11`` (Casio's original ``wqvlinkpalm11.lzh``). Extract
+  the ``.prc``/``.pdb`` payload, add them to the Palm Install Tool, then HotSync.
+  A new ``WQV Link`` icon should appear on the handheld.
 3. **Beam the photos from the watch** – On the Palm, open ``WQV Link`` and tap
   **Tools → Receive All** so it begins listening. On the watch, align the IR
   window with the Palm and choose ``DATA COMM → SEND → OTHER DEVICE`` (or the
   ``Send All`` entry on later models). Keep the devices steady until the Palm
   shows a completion dialog; a full 100-shot transfer takes a couple of minutes.
 
-  ![Palm WQV Link receiving all images](resources/screenshots/wqv-wrist-camera-palm-recieve-all.png "Palm WQV Link app ready to receive all images over infrared")
+  <img src="resources/screenshots/wqv-wrist-camera-palm-recieve-all.png" alt="Palm WQV Link app ready to receive all images over infrared" width="33%" />
 
 4. **HotSync back to the desktop** – Run another HotSync. Palm Desktop writes a
   ``WQVLinkDB.PDB`` backup under
