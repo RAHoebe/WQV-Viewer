@@ -2,7 +2,7 @@
 
 A modern Python implementation of a Casio WQV wrist camera desktop viewer.
 It can decode the monochrome ``.pdr``/``.bin`` dumps produced by WQV-1/2 models
-and the colour JPEG exports produced by later WQV cameras, presenting them in a
+and the colour PNG exports produced by later WQV cameras, presenting them in a
 Qt 6 desktop interface.
 
 This viewer takes inspiration from and pays tribute to [WQV_PDB_Tools](https://github.com/nnnn2cat/WQV_PDB_Tools), whose reverse-engineering work and tooling seeded much of the research behind WQV-Viewer.
@@ -24,8 +24,7 @@ The AI upscaling pipeline builds on the upstream [Real-ESRGAN](https://github.co
 Drop your latest captures under ``resources/screenshots`` and adjust the filenames below as needed. When the PNGs are present, the README renders inline previews of the most common workflows:
 
 ![Main window with dual preview](resources/screenshots/viewer-overview.png "WQV-Viewer main window showing the thumb list, original preview, and upscaled preview")
-![Upscaling controls expanded](resources/screenshots/upscale-controls.png "Upscaling controls with device and order selectors visible")
-![Custom NeoSR model loaded](resources/screenshots/custom-model.png "AI dropdown highlighting the WQV NeoSR (custom x4) option")
+
 
 ## Project layout
 
