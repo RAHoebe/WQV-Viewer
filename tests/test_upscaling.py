@@ -4,6 +4,7 @@ import pytest  # type: ignore
 from collections import OrderedDict
 from typing import Optional, Set, Tuple
 
+import wqv_viewer.upscaling as upscaling_module
 from wqv_viewer.upscaling import (
     ALLOWED_CONVENTIONAL_SCALES,
     PillowUpscaler,
@@ -62,7 +63,7 @@ def _configure_fake_backend(
     enhance_failures: Optional[Set[Tuple[str, bool, int]]] = None,
     enhance_invalid: Optional[Set[Tuple[str, bool, int]]] = None,
 ):
-    def fake_ensure_weights(self, weights, loader):
+    def fake_ensure_weights(self, weights, loader, *, torch_module):
         paths = []
         for weight in weights:
             path = tmp_path / f"{weight.model_name}.pth"
@@ -136,6 +137,44 @@ def test_ai_upscalers_provide_unique_ids() -> None:
     assert methods, "Expected at least one AI upscaler"
     ids = [method.id for method in methods]
     assert len(ids) == len(set(ids)), "AI upscaler identifiers should be unique"
+
+
+def test_custom_model_discovery(monkeypatch, tmp_path) -> None:
+    models_root = tmp_path / "models"
+    custom_dir = models_root / "custom"
+    cache_dir = models_root / "realesrgan"
+    custom_dir.mkdir(parents=True)
+    cache_dir.mkdir(parents=True)
+
+    (custom_dir / "trainer_run_x4.pth").write_bytes(b"0")
+    (custom_dir / "trainer_run_x2.pth").write_bytes(b"0")
+    (custom_dir / "ignore_invalid_scale.pth").write_bytes(b"0")
+
+    monkeypatch.setattr(upscaling_module, "_CUSTOM_MODEL_DIR", custom_dir)
+    monkeypatch.setattr(upscaling_module, "_REALESRGAN_MODEL_DIR", cache_dir)
+
+    variants = upscaling_module._discover_custom_variants()
+    assert len(variants) == 2
+
+    scales = sorted(next(iter(variant.models.keys())) for variant in variants)
+    assert scales == [2, 4]
+
+    ids = {variant.id for variant in variants}
+    assert len(ids) == len(variants)
+
+    for variant in variants:
+        spec = variant.models[next(iter(variant.models))]
+        weight_spec = spec.weights[0]
+        assert weight_spec.local_path is not None
+        assert weight_spec.local_path.exists()
+
+    cache_copy = cache_dir / "trainer_run_x4.pth"
+    cache_copy.write_bytes(b"cache")
+    (custom_dir / "trainer_run_x4.pth").unlink()
+
+    variants_after = upscaling_module._discover_custom_variants()
+    assert all(4 not in variant.models for variant in variants_after)
+    assert not cache_copy.exists()
 
 
 def test_available_upscalers_concatenates_all_methods() -> None:
@@ -366,7 +405,11 @@ def test_realesrgan_local_weights_normalised(tmp_path, include_ema: bool) -> Non
         payload["ema"] = OrderedDict(weight=ema_tensor)
     torch.save(payload, destination)
 
-    paths = upscaler._ensure_weights(model_spec.weights, loader=lambda *args, **kwargs: None)
+    paths = upscaler._ensure_weights(
+        model_spec.weights,
+        loader=lambda *args, **kwargs: None,
+        torch_module=torch,
+    )
     assert paths == [destination]
 
     normalised = torch.load(destination, map_location="cpu")

@@ -96,8 +96,66 @@ def _apply_color_variation(image: Image.Image, rng: random.Random) -> Image.Imag
     return enhancer.enhance(saturation)
 
 
-def synthetic_degradation(hr_patch: Image.Image, lr_size: int, rng: random.Random) -> Tuple[np.ndarray, np.ndarray]:
-    hr_patch = _apply_color_variation(hr_patch, rng)
+def _apply_monochrome_style(
+    image: Image.Image,
+    rng: random.Random,
+    *,
+    levels: int,
+    noise_strength: float,
+) -> Image.Image:
+    grayscale = image.convert("L")
+    array = np.asarray(grayscale, dtype=np.float32) / 255.0
+
+    if rng.random() < 0.9:
+        contrast = rng.uniform(0.9, 1.2)
+        array = np.clip((array - 0.5) * contrast + 0.5, 0.0, 1.0)
+    if rng.random() < 0.9:
+        brightness = rng.uniform(0.9, 1.1)
+        array = np.clip(array * brightness, 0.0, 1.0)
+
+    if noise_strength > 0.0:
+        sigma = rng.uniform(noise_strength * 0.5, noise_strength * 1.5)
+        noise = np.random.default_rng(rng.randrange(1 << 30)).normal(0.0, sigma, size=array.shape).astype(np.float32)
+        array = np.clip(array + noise, 0.0, 1.0)
+
+    quantised = _quantize_levels(array, levels)
+
+    if noise_strength > 0.0:
+        speckle_sigma = noise_strength * 0.3
+        if speckle_sigma > 0.0:
+            speckle = np.random.default_rng(rng.randrange(1 << 30)).normal(0.0, speckle_sigma, size=array.shape).astype(np.float32)
+            quantised = _quantize_levels(np.clip(quantised + speckle, 0.0, 1.0), levels)
+
+    uint8 = (quantised * 255).astype(np.uint8)
+    rgb = np.stack([uint8] * 3, axis=2)
+    return Image.fromarray(rgb, mode="RGB")
+
+
+def _quantize_levels(array: np.ndarray, levels: int) -> np.ndarray:
+    levels = max(2, int(levels))
+    quantised = np.round(array * (levels - 1)) / (levels - 1)
+    return np.clip(quantised, 0.0, 1.0)
+
+
+def synthetic_degradation(
+    hr_patch: Image.Image,
+    lr_size: int,
+    rng: random.Random,
+    *,
+    monochrome_style: bool = False,
+    monochrome_levels: int = 16,
+    monochrome_noise: float = 0.02,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if monochrome_style:
+        hr_patch = _apply_monochrome_style(
+            hr_patch,
+            rng,
+            levels=monochrome_levels,
+            noise_strength=monochrome_noise,
+        )
+    else:
+        hr_patch = _apply_color_variation(hr_patch, rng)
+
     hr_array = np.asarray(hr_patch, dtype=np.uint8).astype(np.float32) / 255.0
     degraded = _apply_blur(hr_array, rng)
     degraded = _apply_noise(degraded, rng)
@@ -106,6 +164,9 @@ def synthetic_degradation(hr_patch: Image.Image, lr_size: int, rng: random.Rando
     interpolation = rng.choice([Image.BICUBIC, Image.BILINEAR, Image.LANCZOS, Image.BOX])
     lr_image = degraded_pil.resize((lr_size, lr_size), interpolation)
     lr_array = np.asarray(lr_image, dtype=np.uint8).astype(np.float32) / 255.0
+    if monochrome_style:
+        hr_array = _quantize_levels(hr_array, monochrome_levels)
+        lr_array = _quantize_levels(lr_array, monochrome_levels)
     return lr_array, hr_array
 
 
@@ -121,6 +182,9 @@ class SyntheticDegradationDataset(Dataset):
         patches_per_image: int,
         seed: int,
         augment: bool = True,
+        monochrome_style: bool = False,
+        monochrome_levels: int = 16,
+        monochrome_noise: float = 0.02,
     ) -> None:
         self.paths = list(image_paths)
         self.scale = scale
@@ -129,6 +193,9 @@ class SyntheticDegradationDataset(Dataset):
         self.patches_per_image = patches_per_image
         self.seed = seed
         self.augment = augment
+        self.monochrome_style = monochrome_style
+        self.monochrome_levels = max(2, int(monochrome_levels))
+        self.monochrome_noise = max(0.0, float(monochrome_noise))
         self.length = len(self.paths) * patches_per_image
 
     def __len__(self) -> int:
@@ -155,7 +222,14 @@ class SyntheticDegradationDataset(Dataset):
             rotations = rng.randint(0, 3)
             if rotations:
                 patch = patch.rotate(90 * rotations)
-        lr_array, hr_array = synthetic_degradation(patch, self.base_resolution, rng)
+        lr_array, hr_array = synthetic_degradation(
+            patch,
+            self.base_resolution,
+            rng,
+            monochrome_style=self.monochrome_style,
+            monochrome_levels=self.monochrome_levels,
+            monochrome_noise=self.monochrome_noise,
+        )
         lr_tensor = self._to_tensor(lr_array)
         hr_tensor = self._to_tensor(hr_array)
         return {

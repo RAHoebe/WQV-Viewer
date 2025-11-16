@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import contextlib
 import io
+import inspect
 import shutil
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from collections import defaultdict
@@ -20,11 +22,16 @@ from PIL import Image
 ALLOWED_CONVENTIONAL_SCALES: Tuple[int, ...] = (2, 3, 4, 5, 6)
 ALLOWED_AI_SCALES: Tuple[int, ...] = (2, 4, 8)
 
+_MODELS_ROOT = Path(__file__).resolve().parent.parent / "models"
+_REALESRGAN_MODEL_DIR = _MODELS_ROOT / "realesrgan"
+_CUSTOM_MODEL_DIR = _MODELS_ROOT / "custom"
+
 
 @dataclass(frozen=True)
 class RealESRGANWeightSpec:
     model_name: str
     urls: Tuple[str, ...]
+    local_path: Optional[Path] = None
 
 
 @dataclass(frozen=True)
@@ -55,7 +62,6 @@ def _ensure_torchvision_functional_tensor() -> None:
     install a lightweight module alias on demand that forwards the attributes
     from the new location.
     """
-
     import importlib
     import sys
     import types
@@ -189,22 +195,6 @@ _REALESRGAN_VARIANTS: Tuple[RealESRGANVariantSpec, ...] = (
         },
     ),
     RealESRGANVariantSpec(
-        id="wqv-neosr-x4",
-        label="WQV NeoSR (custom x4)",
-        models={
-            4: RealESRGANModelSpec(
-                weights=(
-                    RealESRGANWeightSpec(
-                        "wqv_neosr_x4",
-                        (),
-                    ),
-                ),
-                arch="rrdbnet",
-                arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4),
-            ),
-        },
-    ),
-    RealESRGANVariantSpec(
         id="realesrgan-general",
         label="Real-ESRGAN General x4v3",
         models={
@@ -250,45 +240,92 @@ _REALESRGAN_VARIANTS: Tuple[RealESRGANVariantSpec, ...] = (
             ),
         },
     ),
-    RealESRGANVariantSpec(
-        id="realesrgan-anime-6b",
-        label="Real-ESRGAN Anime x4plus (6B)",
-        models={
-            4: RealESRGANModelSpec(
-                weights=(
-                    RealESRGANWeightSpec(
-                        "RealESRGAN_x4plus_anime_6B",
-                        (
-                            "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
-                            "https://huggingface.co/xinntao/Real-ESRGAN/resolve/main/RealESRGAN_x4plus_anime_6B.pth",
-                        ),
-                    ),
-                ),
-                arch="rrdbnet",
-                arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=4),
-            ),
-        },
-    ),
-    RealESRGANVariantSpec(
-        id="realesrgan-anime-v3",
-        label="Real-ESRGAN AnimeVideo v3",
-        models={
-            4: RealESRGANModelSpec(
-                weights=(
-                    RealESRGANWeightSpec(
-                        "realesr-animevideov3",
-                        (
-                            "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
-                            "https://huggingface.co/xinntao/Real-ESRGAN/resolve/main/realesr-animevideov3.pth",
-                        ),
-                    ),
-                ),
-                arch="srvgg",
-                arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=16, upscale=4, act_type="prelu"),
-            ),
-        },
-    ),
+
 )
+
+
+_BUILTIN_WEIGHT_NAMES: set[str] = {
+    weight.model_name
+    for variant in _REALESRGAN_VARIANTS
+    for spec in variant.models.values()
+    for weight in spec.weights
+}
+
+
+def _infer_scale_from_name(name: str) -> Optional[int]:
+    lowered = name.lower()
+    for token, scale in (("x8", 8), ("x4", 4), ("x2", 2)):
+        if re.search(rf"{token}(?!\d)", lowered):
+            return scale
+    return None
+
+
+def _slugify_name(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug or "custom-model"
+
+
+def _cleanup_stale_custom_copies(existing_stems: set[str]) -> None:
+    if not _REALESRGAN_MODEL_DIR.exists():
+        return
+
+    for path in _REALESRGAN_MODEL_DIR.glob("*.pth"):
+        stem = path.stem
+        if stem in existing_stems:
+            continue
+        if stem in _BUILTIN_WEIGHT_NAMES:
+            continue
+        try:
+            path.unlink()
+            logger.info("Removed stale custom Real-ESRGAN weight at %s", path)
+        except OSError as exc:
+            logger.warning("Failed to remove stale custom weight %s: %s", path, exc)
+
+
+def _discover_custom_variants() -> Tuple[RealESRGANVariantSpec, ...]:
+    if not _CUSTOM_MODEL_DIR.exists():
+        _cleanup_stale_custom_copies(set())
+        return ()
+
+    variants: List[RealESRGANVariantSpec] = []
+    seen_ids: set[str] = set()
+    custom_paths = sorted(_CUSTOM_MODEL_DIR.rglob("*.pth"))
+    existing_stems = {path.stem for path in custom_paths}
+
+    for path in custom_paths:
+        scale = _infer_scale_from_name(path.stem)
+        if scale not in (2, 4, 8):
+            logger.debug("Skipping custom model %s: unable to infer scale", path)
+            continue
+
+        slug_base = _slugify_name(path.stem)
+        variant_id = f"custom-{slug_base}"
+        unique_id = variant_id
+        counter = 1
+        while unique_id in seen_ids:
+            counter += 1
+            unique_id = f"{variant_id}-{counter}"
+        seen_ids.add(unique_id)
+
+        label = f"Custom: {path.stem} (×{scale})"
+        weight_spec = RealESRGANWeightSpec(path.stem, (), local_path=path)
+        arch = "sber_rrdbnet" if scale == 8 else "rrdbnet"
+        model_spec = RealESRGANModelSpec(
+            weights=(weight_spec,),
+            arch=arch,
+            arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=scale),
+        )
+        variants.append(
+            RealESRGANVariantSpec(
+                id=unique_id,
+                label=label,
+                models={scale: model_spec},
+            )
+        )
+
+    _cleanup_stale_custom_copies(existing_stems)
+
+    return tuple(variants)
 
 
 logger = logging.getLogger(__name__)
@@ -308,9 +345,8 @@ class RealESRGANUpscaler:
         self._device_policy: RealESRGANDevicePolicy = "auto"
         self._last_backend_details: Optional[Dict[str, object]] = None
         self._init_error: Optional[str] = None
-        self._model_dir = (
-            Path(__file__).resolve().parent.parent / "models" / "realesrgan"
-        )
+        self._torch_supports_weights_only: bool = False
+        self._model_dir = _REALESRGAN_MODEL_DIR
         self._model_dir.mkdir(parents=True, exist_ok=True)
 
     def supported_scales(self) -> Sequence[int]:
@@ -353,6 +389,22 @@ class RealESRGANUpscaler:
                 "machine learning requirements listed in the README to enable AI upscaling."
             )
             raise RuntimeError(self._init_error) from exc
+
+        try:
+            signature = inspect.signature(torch.load)
+            self._torch_supports_weights_only = "weights_only" in signature.parameters
+        except (TypeError, ValueError):  # pragma: no cover - builtins without signature metadata
+            self._torch_supports_weights_only = False
+
+        if self._torch_supports_weights_only and not getattr(torch, "_wqv_weights_only_patch", False):
+            original_torch_load = torch.load
+
+            def _torch_load_weights_only(*args, **kwargs):
+                kwargs.setdefault("weights_only", True)
+                return original_torch_load(*args, **kwargs)
+
+            torch.load = _torch_load_weights_only  # type: ignore[assignment]
+            setattr(torch, "_wqv_weights_only_patch", True)
 
         default_init_weights = basicsr_arch_util.default_init_weights  # type: ignore[attr-defined]
         make_layer = basicsr_arch_util.make_layer  # type: ignore[attr-defined]
@@ -423,11 +475,40 @@ class RealESRGANUpscaler:
         }
         return self._backend
 
-    def _ensure_weights(self, weights: Sequence[RealESRGANWeightSpec], loader) -> List[Path]:
+    def _ensure_weights(
+        self,
+        weights: Sequence[RealESRGANWeightSpec],
+        loader,
+        *,
+        torch_module,
+    ) -> List[Path]:
         paths: List[Path] = []
         for weight in weights:
             destination = self._model_dir / f"{weight.model_name}.pth"
-            if not destination.exists():
+            local_source = Path(weight.local_path).expanduser() if weight.local_path else None
+
+            if local_source is not None:
+                if not local_source.exists():
+                    raise FileNotFoundError(
+                        f"Custom Real-ESRGAN weight '{weight.model_name}' not found at {local_source}"
+                    )
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                same_path = False
+                if destination.exists():
+                    try:
+                        same_path = local_source.samefile(destination)
+                    except (OSError, AttributeError):
+                        same_path = False
+                if not same_path:
+                    needs_copy = True
+                    if destination.exists():
+                        try:
+                            needs_copy = local_source.stat().st_mtime > destination.stat().st_mtime
+                        except OSError:
+                            needs_copy = True
+                    if needs_copy:
+                        shutil.copy2(local_source, destination)
+            elif not destination.exists():
                 if not weight.urls:
                     raise RuntimeError(
                         f"Local Real-ESRGAN weight '{weight.model_name}' not found at {destination}. "
@@ -468,9 +549,10 @@ class RealESRGANUpscaler:
                     )
             if destination.exists():
                 try:  # Normalize plain state dicts into the expected wrapper.
-                    import torch  # type: ignore
-
-                    loadnet = torch.load(destination, map_location="cpu")
+                    load_kwargs = {"map_location": "cpu"}
+                    if self._torch_supports_weights_only:
+                        load_kwargs["weights_only"] = True
+                    loadnet = torch_module.load(destination, **load_kwargs)
                 except Exception:  # pragma: no cover - torch optional or corrupted file
                     pass
                 else:
@@ -480,7 +562,7 @@ class RealESRGANUpscaler:
                             "Normalised Real-ESRGAN weights at %s for compatibility.",
                             destination,
                         )
-                        torch.save(normalized, destination)
+                        torch_module.save(normalized, destination)
             paths.append(destination)
         return paths
 
@@ -590,7 +672,11 @@ class RealESRGANUpscaler:
 
         backend = self._ensure_backend()
         spec = self._model_specs[scale]
-        weight_paths = self._ensure_weights(spec.weights, backend["load_file_from_url"])
+        weight_paths = self._ensure_weights(
+            spec.weights,
+            backend["load_file_from_url"],
+            torch_module=backend["torch"],
+        )
 
         arch_type = spec.arch.lower()
         torch = backend["torch"]
@@ -783,7 +869,9 @@ def conventional_upscalers() -> List[PillowUpscaler]:
 
 
 def ai_upscalers() -> List[RealESRGANUpscaler]:
-    return [RealESRGANUpscaler(variant) for variant in _REALESRGAN_VARIANTS]
+    variants = list(_REALESRGAN_VARIANTS)
+    variants.extend(_discover_custom_variants())
+    return [RealESRGANUpscaler(variant) for variant in variants]
 
 
 def available_upscalers() -> List[Upscaler]:

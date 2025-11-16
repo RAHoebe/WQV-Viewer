@@ -42,6 +42,9 @@ class TrainerConfig:
     ema_decay: float = 0.999
     gradient_clip: float = 0.5
     base_resolution: int = 120
+    monochrome_style: bool = False
+    monochrome_levels: int = 16
+    monochrome_noise: float = 0.02
 
     def resolved_workspace(self) -> Path:
         return self.workspace.expanduser().resolve()

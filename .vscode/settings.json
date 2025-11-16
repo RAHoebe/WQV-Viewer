@@ -1,0 +1,7 @@
+{
+    "python.testing.pytestArgs": [
+        "wqv_upscale_trainer"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}

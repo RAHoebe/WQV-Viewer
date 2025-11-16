@@ -161,6 +161,9 @@ def _make_dataloader(
         patches_per_image=patches_per_image,
         seed=config.seed + seed_offset,
         augment=augment,
+        monochrome_style=config.monochrome_style,
+        monochrome_levels=config.monochrome_levels,
+        monochrome_noise=config.monochrome_noise,
     )
     return DataLoader(
         dataset,

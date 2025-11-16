@@ -43,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-log-max-samples", type=int, default=4, help="Maximum samples per TensorBoard image grid (default: 4).")
     parser.add_argument("--resume", type=Path, default=None, help="Checkpoint path to resume training from.")
     parser.add_argument("--base-resolution", type=int, default=120, help="Target WQV base resolution (default: 120).")
+    parser.add_argument("--monochrome-style", action="store_true", help="Convert source patches to monochrome with WQV-style quantisation and noise.")
+    parser.add_argument("--monochrome-levels", type=int, default=16, help="Number of grayscale levels when --monochrome-style is enabled (default: 16).")
+    parser.add_argument("--monochrome-noise", type=float, default=0.02, help="Noise strength for monochrome simulation (default: 0.02).")
     parser.add_argument("--tensorboard", action="store_true", help="Enable TensorBoard logging under the workspace directory.")
     parser.add_argument("--config-only", action="store_true", help="Emit resolved configuration as JSON and exit.")
     return parser
@@ -80,6 +83,9 @@ def parse_config(argv: list[str] | None = None) -> TrainerConfig:
         ema_decay=args.ema_decay,
         gradient_clip=args.gradient_clip,
         base_resolution=args.base_resolution,
+        monochrome_style=args.monochrome_style,
+        monochrome_levels=max(2, args.monochrome_levels),
+        monochrome_noise=max(0.0, args.monochrome_noise),
     )
     if args.config_only:
         print(json.dumps(config.__dict__, default=str, indent=2))

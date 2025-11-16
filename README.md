@@ -102,14 +102,14 @@ monochrome dumps).
 The recommended path is to offload images to a Palm handheld over infrared and
 then sync the Palm backup database back to your computer. The outline below
 combines the official Casio Palm app with the field notes in
-[Sam Mortimer's deep dive](https://segamadebaddecisions.wordpress.com/2024/06/30/the-casio-wrist-camera-wqv-1-absolutely-unwilling-to-share-its-secrets-with-a-pc/).
+[Sam Mortimer's deep dive](https://segamadebaddecisions.wordpress.com/2024/06/30/the-casio-wrist-camera-wqv-1-absolutely-unwilling-to-share-its-secrets-with-a-pc/) and this
+[watch-to-Palm transfer video](https://www.youtube.com/shorts/se8XrWMHHeo).
 
 1. **Prepare a Palm with IR** – Palm m100/m105/m125 or any Palm OS 3.3–4.x
   device with an infrared window works well. Install Palm Desktop/HotSync on
   your PC (Windows XP-era versions run fine inside a VM if you prefer).
 2. **Install WQV Link on the Palm** – The repo bundles the official installer
-  under ``tools/wqvlinkpalm11`` (Casio's original ``wqvlinkpalm11.lzh``). Extract
-  the ``.prc``/``.pdb`` payload, add them to the Palm Install Tool, then HotSync.
+  under ``tools/wqvlinkpalm11`` (Casio's original ``wqvlinkpalm11.lzh``). Add the WQVLink.prc payload to the Palm Install Tool, then HotSync.
   A new ``WQV Link`` icon should appear on the handheld.
 3. **Beam the photos from the watch** – On the Palm, open ``WQV Link`` and tap
   **Tools → Receive All** so it begins listening. On the watch, align the IR
@@ -166,11 +166,12 @@ The companion CLI, ``wqv-upscale-trainer``, packages everything you need to fine
 
 ```bash
 wqv-upscale-trainer path/to/source-images run-workspace --scale 4 --steps 100000 \
-  --batch-size 6 --grad-accum-steps 4 --tensorboard
+  --batch-size 6 --grad-accum-steps 4 --tensorboard --monochrome-style
 ```
 
 - ``run-workspace`` is created automatically; logs, checkpoints, and TensorBoard events land there.
 - Adjust ``--device`` (``auto``/``cuda``/``cpu``), ``--learning-rate``, or ``--perceptual-weight`` to experiment.
+- Pass ``--monochrome-style`` to convert every synthetic patch to a WQV-like monochrome look (4-bit quantisation and sensor noise). Use ``--monochrome-levels`` and ``--monochrome-noise`` to fine-tune the tone curve if you have reference material with a different feel.
 
 **3. Monitor progress**
 - ``trainer.log`` captures per-step losses and validation PSNR.
