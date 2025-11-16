@@ -5,17 +5,27 @@ It can decode the monochrome ``.pdr``/``.bin`` dumps produced by WQV-1/2 models
 and the colour JPEG exports produced by later WQV cameras, presenting them in a
 Qt 6 desktop interface.
 
+This viewer takes inspiration from and pays tribute to [WQV_PDB_Tools](https://github.com/nnnn2cat/WQV_PDB_Tools), whose reverse-engineering work and tooling seeded much of the research behind WQV-Viewer.
+
 ## Features
 
 - ✅ Pure-Python decoder for the packed 4-bit monochrome image stream
 - ✅ Automatic clean-up of the corrupt ``DBLK`` chunk found in colour JPEG exports
 - ✅ Understands ``WQVLinkDB.PDB`` archives and extracts every embedded frame
 - ✅ Responsive PyQt6 UI with thumbnail list, dual-pane preview, metadata pane, and PNG export
-- ✅ Built-in 2×/3×/4×/6x upscalers (nearest, bilinear, bicubic, Lanczos) plus an AI option powered by Real-ESRGAN (2×/4×) with manual GPU/CPU selection and automatic fallback
+- ✅ Built-in 2×/3×/4×/6× upscalers (nearest, bilinear, bicubic, Lanczos) plus an AI option powered by Real-ESRGAN (2×/4×/8×, including Sber's extended models) with manual GPU/CPU selection, automatic fallback, and a configurable stage order
 - ✅ Custom toolbar and application icons inspired by the original wrist camera aesthetic
 - ✅ Automated unit tests covering the parser and a GUI smoke test
 
-The AI upscaling pipeline builds on the upstream [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) project and bundles its pretrained weights for convenience.
+The AI upscaling pipeline builds on the upstream [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) project and incorporates the extended 2×/4×/8× variants published by Sber AI-Forever on [Hugging Face](https://huggingface.co/ai-forever/Real-ESRGAN), bundling the necessary pretrained weights for convenience.
+
+## Screenshots
+
+Drop your latest captures under ``resources/screenshots`` and adjust the filenames below as needed. When the PNGs are present, the README renders inline previews of the most common workflows:
+
+![Main window with dual preview](resources/screenshots/viewer-overview.png "WQV-Viewer main window showing the thumb list, original preview, and upscaled preview")
+![Upscaling controls expanded](resources/screenshots/upscale-controls.png "Upscaling controls with device and order selectors visible")
+![Custom NeoSR model loaded](resources/screenshots/custom-model.png "AI dropdown highlighting the WQV NeoSR (custom x4) option")
 
 ## Project layout
 
@@ -25,7 +35,8 @@ WQV-Viewer/
 ├── pyproject.toml          # Project metadata & dependencies
 ├── resources/              # Custom toolbar & application icons
 ├── tests/                  # Pytest test-suite and sample assets
-└── wqv_viewer/             # Runtime package (parser + GUI)
+├── wqv_viewer/             # Runtime package (parser + GUI)
+└── wqv_upscale_trainer/    # CLI trainer for custom NeoSR weights
 ```
 
 ## Getting started
@@ -46,6 +57,9 @@ python -m pip install -e .[dev]
 > the release page (for example
 > [`RealESRGAN_x2plus.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth),
 > [`RealESRGAN_x4plus.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth),
+> [`RealESRGAN_x2.pth`](https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x2.pth),
+> [`RealESRGAN_x4.pth`](https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x4.pth),
+> [`RealESRGAN_x8.pth`](https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x8.pth),
 > [`realesr-general-x4v3.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth),
 > [`realesr-general-wdn-x4v3.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-wdn-x4v3.pth),
 > [`RealESRGAN_x4plus_anime_6B.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth),
@@ -90,19 +104,54 @@ monochrome dumps).
 
 Every image is shown twice: the original resolution on the left and an
 upscaled preview on the right. Pick a method (nearest/bilinear/bicubic/Lanczos
-or the AI-powered Real-ESRGAN model), a scale factor (2×, 3×, or 4×), and now a
-device preference (Auto/GPU/CPU) from the toolbar above the previews to refresh
-the upscale. The Real-ESRGAN weights are cached locally after the first run
-under ``WQV-Viewer/models/realesrgan``.
+or the AI-powered Real-ESRGAN model), a scale factor (2×, 3×, 4×, or 8× when available), a
+ device preference (Auto/GPU/CPU), and the stage order using the new **Order**
+ dropdown (``Conventional → AI`` or ``AI → Conventional``) from the toolbar above the
+previews to refresh the upscale. The Real-ESRGAN weights are cached locally
+after the first run under ``WQV-Viewer/models/realesrgan``.
+The conventional stage runs first by default, so flipping the order is now a single click when you prefer to apply AI detail enhancement before a final resample.
 The AI dropdown now exposes multiple Real-ESRGAN flavours so you can pick the
 one that suits your footage:
 
 - **Real-ESRGAN Plus (2×/4×)** – the classic high-quality RRDBNet models.
+- **Real-ESRGAN (Sber 2×/4×/8×)** – the ai-forever variants with an extended
+  8× RRDBNet stack for aggressive upscaling straight from the Hugging Face release.
 - **General x4v3** – the lighter, denoise-tunable SRVGG model (defaults to a
   50/50 blend of the standard and WDN weights).
 - **General x4v3 (denoise)** – the pure WDN weights for extra smoothing.
 - **Anime x4plus (6B)** – the RRDBNet model tuned for crisp anime line art.
 - **AnimeVideo v3** – the ultra-small SRVGG model optimised for anime videos.
+- **WQV NeoSR (custom x4)** – loads a local ``wqv_neosr_x4.pth`` checkpoint produced by the trainer.
+
+### Training your own NeoSR weights
+
+The companion CLI, ``wqv-upscale-trainer``, packages everything you need to fine-tune a NeoSR-style generator on high resolution scans.
+
+**1. Gather training material**
+- Place lossless source images (PNG/TIFF) in a single directory. The trainer automatically derives synthetic low-resolution crops, so you only need HR references.
+- Aim for at least a few hundred crops worth of material; mix in varied lighting to avoid overfitting.
+
+**2. Launch a run**
+
+```bash
+wqv-upscale-trainer path/to/source-images run-workspace --scale 4 --steps 100000 \
+  --batch-size 6 --grad-accum-steps 4 --tensorboard
+```
+
+- ``run-workspace`` is created automatically; logs, checkpoints, and TensorBoard events land there.
+- Adjust ``--device`` (``auto``/``cuda``/``cpu``), ``--learning-rate``, or ``--perceptual-weight`` to experiment.
+
+**3. Monitor progress**
+- ``trainer.log`` captures per-step losses and validation PSNR.
+- If ``--tensorboard`` is enabled, launch ``tensorboard --logdir run-workspace/tensorboard`` to visualise metrics.
+- Intermediate checkpoints live under ``run-workspace/checkpoints`` in case you want to resume with ``--resume-from``.
+
+**4. Install the trained model in the viewer**
+- The final EMA export is written to ``run-workspace/models/wqv_neosr_x4.pth``.
+- Copy that file into ``models/realesrgan`` (overwriting the previous version if present).
+- The viewer normalises the checkpoint the first time it loads **WQV NeoSR (custom x4)**, shrinking it to the lightweight ``params`` payload and reusing it for subsequent sessions.
+- If you maintain multiple variants, store them beside the stock weights and swap them in/out or rename ``wqv_neosr_x4.pth`` before launching the viewer.
+- Run ``wqv-upscale-trainer --help`` for the full list of configuration switches, including dataset splits, EMA decay, and gradient clipping.
 
 ## Running the tests
 

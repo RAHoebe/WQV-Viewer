@@ -9,7 +9,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from collections import defaultdict
-from typing import Dict, Iterable, List, Literal, Optional, Protocol, Sequence, Tuple, Union, cast
+from collections.abc import Mapping
+from typing import Any, Dict, Iterable, List, Literal, Optional, Protocol, Sequence, Tuple, Union, cast
 
 from PIL import Image
 
@@ -184,6 +185,22 @@ _REALESRGAN_VARIANTS: Tuple[RealESRGANVariantSpec, ...] = (
                 ),
                 arch="sber_rrdbnet",
                 arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=8),
+            ),
+        },
+    ),
+    RealESRGANVariantSpec(
+        id="wqv-neosr-x4",
+        label="WQV NeoSR (custom x4)",
+        models={
+            4: RealESRGANModelSpec(
+                weights=(
+                    RealESRGANWeightSpec(
+                        "wqv_neosr_x4",
+                        (),
+                    ),
+                ),
+                arch="rrdbnet",
+                arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4),
             ),
         },
     ),
@@ -411,6 +428,11 @@ class RealESRGANUpscaler:
         for weight in weights:
             destination = self._model_dir / f"{weight.model_name}.pth"
             if not destination.exists():
+                if not weight.urls:
+                    raise RuntimeError(
+                        f"Local Real-ESRGAN weight '{weight.model_name}' not found at {destination}. "
+                        "Place the file there manually or provide download URLs."
+                    )
                 errors: List[str] = []
                 downloaded = False
                 for url in weight.urls:
@@ -452,12 +474,44 @@ class RealESRGANUpscaler:
                 except Exception:  # pragma: no cover - torch optional or corrupted file
                     pass
                 else:
-                    if isinstance(loadnet, dict) and not any(
-                        key in loadnet for key in ("params", "params_ema")
-                    ):
-                        torch.save({"params": loadnet}, destination)
+                    normalized = self._normalize_state_dict(loadnet)
+                    if normalized is not None:
+                        logger.debug(
+                            "Normalised Real-ESRGAN weights at %s for compatibility.",
+                            destination,
+                        )
+                        torch.save(normalized, destination)
             paths.append(destination)
         return paths
+
+    @staticmethod
+    def _extract_state_dict(payload: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+        """Heuristic extraction of the actual model weights from mixed payloads."""
+
+        if any(isinstance(key, str) and ("." in key or key.endswith(("weight", "bias"))) for key in payload):
+            return payload
+
+        for key in ("params_ema", "ema", "generator_ema", "params", "generator", "state_dict", "model"):
+            candidate = payload.get(key)
+            if isinstance(candidate, Mapping):
+                extracted = RealESRGANUpscaler._extract_state_dict(candidate)
+                if extracted is not None:
+                    return extracted
+
+        return None
+
+    @staticmethod
+    def _normalize_state_dict(loadnet: Any) -> Optional[Dict[str, Dict[str, Any]]]:
+        """Normalise assorted checkpoint payloads into Real-ESRGAN's expected shape."""
+
+        if not isinstance(loadnet, Mapping):
+            return None
+
+        candidate = RealESRGANUpscaler._extract_state_dict(loadnet)
+        if candidate is None:
+            return None
+
+        return {"params": dict(candidate)}
 
     def _device_tile_attempts(self, policy: RealESRGANDevicePolicy, torch_module) -> List[Tuple[str, bool, int]]:
         attempts: List[Tuple[str, bool, int]] = []

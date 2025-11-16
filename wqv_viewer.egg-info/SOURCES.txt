@@ -3,6 +3,13 @@ pyproject.toml
 tests/test_gui_smoke.py
 tests/test_parser.py
 tests/test_upscaling.py
+wqv_upscale_trainer/__init__.py
+wqv_upscale_trainer/__main__.py
+wqv_upscale_trainer/cli.py
+wqv_upscale_trainer/config.py
+wqv_upscale_trainer/data.py
+wqv_upscale_trainer/models.py
+wqv_upscale_trainer/train.py
 wqv_viewer/__init__.py
 wqv_viewer/__main__.py
 wqv_viewer/exporter.py
@@ -13,5 +20,6 @@ wqv_viewer/upscaling.py
 wqv_viewer.egg-info/PKG-INFO
 wqv_viewer.egg-info/SOURCES.txt
 wqv_viewer.egg-info/dependency_links.txt
+wqv_viewer.egg-info/entry_points.txt
 wqv_viewer.egg-info/requires.txt
 wqv_viewer.egg-info/top_level.txt

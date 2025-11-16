@@ -75,6 +75,7 @@ class PipelineConfig:
     enable_ai: bool = False
     ai_id: Optional[str] = None
     ai_scale: Optional[int] = None
+    ai_before_conventional: bool = False
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -84,6 +85,7 @@ class PipelineConfig:
             "enable_ai": self.enable_ai,
             "ai_id": self.ai_id,
             "ai_scale": self.ai_scale,
+            "ai_before_conventional": self.ai_before_conventional,
         }
 
     @classmethod
@@ -97,6 +99,7 @@ class PipelineConfig:
             enable_ai=bool(data.get("enable_ai", False)),
             ai_id=_as_optional_str(data.get("ai_id")),
             ai_scale=_as_optional_int(data.get("ai_scale")),
+            ai_before_conventional=bool(data.get("ai_before_conventional", False)),
         )
 
 
@@ -125,19 +128,26 @@ def build_pipeline(
 ) -> List[PipelineStage]:
     """Resolve ``config`` into executable pipeline stages."""
 
-    stages: List[PipelineStage] = []
+    conventional_stage: Optional[PipelineStage] = None
+    ai_stage: Optional[PipelineStage] = None
 
     if config.enable_conventional:
         upscaler = _resolve_upscaler(config.conventional_id, conventional_map)
         if upscaler is not None:
-            stages.append(("Conventional", upscaler, config.conventional_scale))
+            conventional_stage = ("Conventional", upscaler, config.conventional_scale)
 
     if config.enable_ai:
         upscaler = _resolve_upscaler(config.ai_id, ai_map)
         if upscaler is not None and config.ai_scale is not None:
-            stages.append(("AI", upscaler, config.ai_scale))
+            ai_stage = ("AI", upscaler, config.ai_scale)
 
-    return stages
+    ordered: List[PipelineStage] = []
+    stage_order = (ai_stage, conventional_stage) if config.ai_before_conventional else (conventional_stage, ai_stage)
+    for stage in stage_order:
+        if stage is not None:
+            ordered.append(stage)
+
+    return ordered
 
 
 def _resolve_upscaler(identifier: Optional[str], registry: Dict[str, Upscaler]) -> Optional[Upscaler]:

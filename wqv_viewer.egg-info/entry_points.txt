@@ -1,0 +1,2 @@
+[console_scripts]
+wqv-upscale-trainer = wqv_upscale_trainer.cli:main

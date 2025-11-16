@@ -417,6 +417,14 @@ class ImageBrowser(QWidget):
         ai_row.addWidget(self.ai_scale_combo)
         primary_layout.addLayout(ai_row)
 
+        order_row = QHBoxLayout()
+        self.order_label = QLabel("Order")
+        self.order_combo = QComboBox()
+        order_row.addWidget(self.order_label)
+        order_row.addWidget(self.order_combo)
+        order_row.addStretch(1)
+        primary_layout.addLayout(order_row)
+
         controls_layout.addWidget(primary_group)
 
         device_row = QHBoxLayout()
@@ -441,6 +449,7 @@ class ImageBrowser(QWidget):
         self.ai_combo.currentIndexChanged.connect(self._on_ai_upscaler_changed)
         self.ai_scale_combo.currentIndexChanged.connect(self._on_pipeline_changed)
         self.device_combo.currentIndexChanged.connect(self._on_device_changed)
+        self.order_combo.currentIndexChanged.connect(self._on_pipeline_changed)
 
     def _populate_controls(self) -> None:
         self.conventional_combo.blockSignals(True)
@@ -473,6 +482,13 @@ class ImageBrowser(QWidget):
         self.ai_checkbox.setEnabled(ai_available)
         self._refresh_ai_scales(self.ai_combo, self.ai_scale_combo, preferred_scale=2)
         self._populate_device_controls()
+
+        self.order_combo.blockSignals(True)
+        self.order_combo.clear()
+        self.order_combo.addItem("Conventional → AI", "conventional-first")
+        self.order_combo.addItem("AI → Conventional", "ai-first")
+        self.order_combo.setCurrentIndex(0)
+        self.order_combo.blockSignals(False)
 
     # --------------------------------------------------------------- data-load
     def load_images(self, images: Sequence[WQVImage]) -> None:
@@ -543,6 +559,7 @@ class ImageBrowser(QWidget):
             "ai_id": self.ai_combo.currentData(),
             "ai_scale": self.ai_scale_combo.currentData(),
             "device_policy": self.device_combo.currentData(),
+            "pipeline_order": self.order_combo.currentData(),
         }
 
     def restore_state(self, state: Mapping[str, Any]) -> None:
@@ -578,6 +595,8 @@ class ImageBrowser(QWidget):
                 )
             else:
                 self._refresh_ai_scales(self.ai_combo, self.ai_scale_combo)
+
+            _set_combo_data(self.order_combo, state.get("pipeline_order"))
 
             device_policy = state.get("device_policy")
             if isinstance(device_policy, str):
@@ -733,6 +752,9 @@ class ImageBrowser(QWidget):
         device_enabled = ai_enabled
         self.device_label.setEnabled(device_enabled)
         self.device_combo.setEnabled(device_enabled)
+        order_enabled = conventional_enabled and ai_enabled
+        self.order_label.setEnabled(order_enabled)
+        self.order_combo.setEnabled(order_enabled)
 
     def _refresh_ai_scales(
         self,
@@ -823,6 +845,7 @@ class ImageBrowser(QWidget):
             enable_ai=enable_ai,
             ai_id=self.ai_combo.currentData() if enable_ai else None,
             ai_scale=self._current_ai_scale(self.ai_combo, self.ai_scale_combo) if enable_ai else None,
+            ai_before_conventional=(self.order_combo.currentData() == "ai-first"),
         )
 
     def _apply_upscale(self) -> None:

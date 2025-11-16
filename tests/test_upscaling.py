@@ -1,6 +1,7 @@
 import numpy as np  # type: ignore
 from PIL import Image
 import pytest  # type: ignore
+from collections import OrderedDict
 from typing import Optional, Set, Tuple
 
 from wqv_viewer.upscaling import (
@@ -16,6 +17,21 @@ from wqv_viewer.upscaling import (
     upscale_image,
     upscale_sequence,
 )
+from wqv_viewer.pipeline import PipelineConfig, build_pipeline
+class _StubUpscaler:
+    def __init__(self, identifier: str, label: str) -> None:
+        self.id = identifier
+        self.label = label
+
+    def supports_scale(self, _scale: int) -> bool:
+        return True
+
+    def supported_scales(self):
+        return (2,)
+
+    def upscale(self, image: Image.Image, scale: int) -> Image.Image:  # pragma: no cover - not used
+        return image
+
 
 
 def _make_test_variant() -> RealESRGANVariantSpec:
@@ -125,6 +141,50 @@ def test_ai_upscalers_provide_unique_ids() -> None:
 def test_available_upscalers_concatenates_all_methods() -> None:
     total = available_upscalers()
     assert len(total) == len(conventional_upscalers()) + len(ai_upscalers())
+
+
+def test_build_pipeline_default_order_is_conventional_then_ai() -> None:
+    conventional = _StubUpscaler("conv", "Conventional")
+    ai = _StubUpscaler("ai", "AI")
+    config = PipelineConfig(
+        enable_conventional=True,
+        conventional_id="conv",
+        conventional_scale=2,
+        enable_ai=True,
+        ai_id="ai",
+        ai_scale=2,
+        ai_before_conventional=False,
+    )
+
+    pipeline = build_pipeline(
+        config,
+        conventional_map={"conv": conventional},
+        ai_map={"ai": ai},
+    )
+
+    assert [stage[0] for stage in pipeline] == ["Conventional", "AI"]
+
+
+def test_build_pipeline_ai_first_option() -> None:
+    conventional = _StubUpscaler("conv", "Conventional")
+    ai = _StubUpscaler("ai", "AI")
+    config = PipelineConfig(
+        enable_conventional=True,
+        conventional_id="conv",
+        conventional_scale=2,
+        enable_ai=True,
+        ai_id="ai",
+        ai_scale=2,
+        ai_before_conventional=True,
+    )
+
+    pipeline = build_pipeline(
+        config,
+        conventional_map={"conv": conventional},
+        ai_map={"ai": ai},
+    )
+
+    assert [stage[0] for stage in pipeline] == ["AI", "Conventional"]
 
 
 def test_real_esrgan_scales() -> None:
@@ -277,3 +337,42 @@ def test_realesrgan_invalid_output_triggers_retry(monkeypatch, tmp_path) -> None
     assert attempts[1] == ("cuda", True, 256)
     assert len(attempts) == 2
     assert upscaler.describe_backend() == "CUDA FP16, tile 256"
+
+
+@pytest.mark.parametrize("include_ema", [True, False])
+def test_realesrgan_local_weights_normalised(tmp_path, include_ema: bool) -> None:
+    torch = pytest.importorskip("torch")
+
+    weight_spec = RealESRGANWeightSpec("local_weights", ())
+    model_spec = RealESRGANModelSpec(
+        weights=(weight_spec,),
+        arch="rrdbnet",
+        arch_args=dict(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4),
+    )
+    variant = RealESRGANVariantSpec(id="local-test", label="Local Test", models={4: model_spec})
+
+    upscaler = RealESRGANUpscaler(variant)
+    upscaler._model_dir = tmp_path
+
+    destination = tmp_path / "local_weights.pth"
+    generator_tensor = torch.randn(1)
+    payload = {
+        "generator": OrderedDict(weight=generator_tensor),
+        "optimizer": {},
+        "step": 42,
+    }
+    if include_ema:
+        ema_tensor = torch.randn(1)
+        payload["ema"] = OrderedDict(weight=ema_tensor)
+    torch.save(payload, destination)
+
+    paths = upscaler._ensure_weights(model_spec.weights, loader=lambda *args, **kwargs: None)
+    assert paths == [destination]
+
+    normalised = torch.load(destination, map_location="cpu")
+    assert set(normalised.keys()) == {"params"}
+
+    expected_key = "ema" if include_ema else "generator"
+    expected = payload[expected_key]
+    assert isinstance(normalised["params"], dict)
+    assert torch.equal(normalised["params"]["weight"], expected["weight"])

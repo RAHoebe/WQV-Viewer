@@ -1,1 +1,2 @@
+wqv_upscale_trainer
 wqv_viewer

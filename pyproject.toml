@@ -26,5 +26,8 @@ dev = [
     "pytest>=7",
 ]
 
+[project.scripts]
+wqv-upscale-trainer = "wqv_upscale_trainer.cli:main"
+
 [tool.setuptools]
-packages = ["wqv_viewer"]
+packages = ["wqv_viewer", "wqv_upscale_trainer"]
