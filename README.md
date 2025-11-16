@@ -99,11 +99,9 @@ monochrome dumps).
 
 ### Moving photos from the watch to your PC (Palm OS bridge)
 
-If you do not have Casio's original PAD-2 infrared cradle, the most reliable
-workflow is to offload images to a Palm handheld over infrared, then sync that
-database back to your computer. The outline below combines the official Casio
-Palm app with modern community tooling such as
-[WQV_PDB_Tools](https://github.com/nnnn2cat/WQV_PDB_Tools) and the field notes in
+The recommended path is to offload images to a Palm handheld over infrared and
+then sync the Palm backup database back to your computer. The outline below
+combines the official Casio Palm app with the field notes in
 [Sam Mortimer's deep dive](https://segamadebaddecisions.wordpress.com/2024/06/30/the-casio-wrist-camera-wqv-1-absolutely-unwilling-to-share-its-secrets-with-a-pc/).
 
 1. **Prepare a Palm with IR** – Palm m100/m105/m125 or any Palm OS 3.3–4.x
@@ -116,21 +114,22 @@ Palm app with modern community tooling such as
 3. **Beam the photos from the watch** – On the Palm, open ``WQV Link`` and tap
   **Tools → Receive All** so it begins listening. On the watch, align the IR
   window with the Palm and choose ``DATA COMM → SEND → OTHER DEVICE`` (or the
-  equivalent ``Send All`` entry). Keep the devices steady until the Palm shows
-  a completion dialog; a full 100-shot transfer takes a couple of minutes.
+  ``Send All`` entry on later models). Keep the devices steady until the Palm
+  shows a completion dialog; a full 100-shot transfer takes a couple of minutes.
+
+  ![Palm WQV Link receiving all images](resources/screenshots/wqv-wrist-camera-palm-recieve-all.png "Palm WQV Link app ready to receive all images over infrared")
+
 4. **HotSync back to the desktop** – Run another HotSync. Palm Desktop writes a
   ``WQVLinkDB.PDB`` backup under
   ``%USERPROFILE%\Documents\Palm OS Desktop\<HotSyncName>\Backup`` (colour
   watches will emit per-image ``CASIJPG*.PDB`` files instead).
-5. **Open the database in WQV-Viewer** – Point the viewer at the backed-up
-  ``.pdb`` file via **File → Open WQVLinkDB…**. The monochrome frames will
-  unpack instantly. If you want standalone bitmaps on disk, you can also drop
-  the same ``.pdb`` into WQV_PDB_Tools and batch-export BMP/PNG files.
-6. **Optional: Palm OS Emulator** – When you need screenshots with the Palm UI
-  overlay, follow the blog guide to load ``WQV Link`` and your ``.pdb`` into
-  Palm OS Emulator (POEM) using a Palm OS 3.5 ROM, then capture BMPs with
-  ``Alt+M``. This is handy for documentation, but unnecessary for normal
-  extraction workflows now that WQV-Viewer handles the decoding directly.
+5. **Work from a copy of the backup** – Copy ``WQVLinkDB.PDB`` to a separate
+  working folder before opening it so the Palm Desktop backup remains intact.
+  Point WQV-Viewer at that copy via **File → Open WQVLinkDB…** to unpack and
+  browse the images locally. When you prefer standalone bitmaps on disk, you
+  can also drop the same ``.pdb`` into
+  [WQV_PDB_Tools](https://github.com/nnnn2cat/WQV_PDB_Tools) to batch-export
+  BMP/PNG files.
 
 ### Upscaling controls
 
