@@ -19,9 +19,7 @@ This viewer takes inspiration from and pays tribute to [WQV_PDB_Tools](https://g
 
 The AI upscaling pipeline builds on the upstream [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) project and incorporates the extended 2×/4×/8× variants published by Sber AI-Forever on [Hugging Face](https://huggingface.co/ai-forever/Real-ESRGAN), bundling the necessary pretrained weights for convenience.
 
-## Screenshots
-
-Drop your latest captures under ``resources/screenshots`` and adjust the filenames below as needed. When the PNGs are present, the README renders inline previews of the most common workflows:
+## Screenshot
 
 ![Main window with dual preview](resources/screenshots/viewer-overview.png "WQV-Viewer main window showing the thumb list, original preview, and upscaled preview")
 
