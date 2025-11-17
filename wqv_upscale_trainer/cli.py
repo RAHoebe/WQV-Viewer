@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-resolution", type=int, default=120, help="Target WQV base resolution (default: 120).")
     parser.add_argument("--monochrome-style", action="store_true", help="Convert source patches to monochrome with WQV-style quantisation and noise.")
     parser.add_argument("--monochrome-levels", type=int, default=16, help="Number of grayscale levels when --monochrome-style is enabled (default: 16).")
-    parser.add_argument("--monochrome-noise", type=float, default=0.02, help="Noise strength for monochrome simulation (default: 0.02).")
+    parser.add_argument("--monochrome-noise", type=float, default=0.01, help="Noise strength for monochrome simulation (default: 0.01).")
     parser.add_argument("--tensorboard", action="store_true", help="Enable TensorBoard logging under the workspace directory.")
     parser.add_argument("--config-only", action="store_true", help="Emit resolved configuration as JSON and exit.")
     return parser
