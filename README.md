@@ -1,197 +1,141 @@
-# WQV Wristcam Viewer (PyQt6)
+# WQV Wristcam Viewer & Trainer
 
-A modern Python implementation of a Casio WQV wrist camera desktop viewer.
-It can decode the monochrome ``.pdr``/``.bin`` dumps produced by WQV-1/2 models
-and the colour PNG exports produced by later WQV cameras, presenting them in a
-Qt 6 desktop interface.
+WQV-Viewer is a PyQt6 desktop application and companion NeoSR trainer built for the Casio WQV wrist cameras. It decodes Palm backups, previews captures, upscales them with configurable pipelines, and ships a training toolchain for producing new Real-ESRGAN style weights tuned to wristcam footage.
 
-This viewer takes inspiration from and pays tribute to [WQV_PDB_Tools](https://github.com/nnnn2cat/WQV_PDB_Tools), whose reverse-engineering work and tooling seeded much of the research behind WQV-Viewer.
+## Highlights
+- Pure-Python parser loads WQVLink Palm databases, raw monochrome dumps, and colour JPEG exports while preserving capture metadata.
+- Responsive dual-pane GUI with thumbnail grid, metadata panel, multi-selection export, and asynchronous upscaling workers that keep the interface responsive.
+- Configurable pipeline that mixes conventional resamplers with Real-ESRGAN variants, includes GPU/CPU device policies with automatic fallback, and lets you flip the processing order.
+- Bundled Real-ESRGAN weights plus repository-supplied custom checkpoints (`models/custom/wqv_neosr_x4.pth` and `models/custom/wqv_neosr_x8.pth`) that appear alongside the stock models in the UI.
+- Export flow writes PNGs with embedded JSON metadata, drops readable sidecars, remembers destinations, and provides progress plus cancel controls for long AI runs.
+- `wqv-upscale-trainer` CLI creates synthetic WQV degradations, manages train/val/test splits, tracks EMA checkpoints, logs to TensorBoard, and emits deployable weights ready for the viewer.
 
-## Features
+## Requirements
+- Python 3.9 or newer with pip available on your PATH.
+- Desktop platform with Qt 6 support (Windows, macOS, or modern Linux).
+- NVIDIA CUDA GPU recommended for Real-ESRGAN acceleration, but CPU mode is available.
+- Sufficient disk space for model weights (`models/realesrgan` and `models/custom`).
 
-- ✅ Pure-Python decoder for the packed 4-bit monochrome image stream
-- ✅ Automatic clean-up of the corrupt ``DBLK`` chunk found in colour JPEG exports
-- ✅ Understands ``WQVLinkDB.PDB`` archives and extracts every embedded frame
-- ✅ Responsive PyQt6 UI with thumbnail list, dual-pane preview, metadata pane, and PNG export
-- ✅ Built-in 2×/3×/4×/6× upscalers (nearest, bilinear, bicubic, Lanczos) plus an AI option powered by Real-ESRGAN (2×/4×/8×, including Sber's extended models) with manual GPU/CPU selection, automatic fallback, and a configurable stage order
-- ✅ Custom toolbar and application icons inspired by the original wrist camera aesthetic
-- ✅ Automated unit tests covering the parser and a GUI smoke test
+## Installation
+1. Clone the repository and open a shell inside `WQV-Viewer`.
+2. Install the project in editable mode (this pulls in PyQt6, Torch, Real-ESRGAN, and pytest):
+   ```bash
+   python -m pip install -e .[dev]
+   ```
+3. (Optional) Verify that PyTorch detects your GPU: `python -c "import torch; print(torch.cuda.is_available())"`.
 
-The AI upscaling pipeline builds on the upstream [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) project and incorporates the extended 2×/4×/8× variants published by Sber AI-Forever on [Hugging Face](https://huggingface.co/ai-forever/Real-ESRGAN), bundling the necessary pretrained weights for convenience.
+> Offline installs: download the Real-ESRGAN weights you need and place them under `models/realesrgan` before launching the viewer. The viewer will skip network downloads when the files already exist.
 
-## Screenshot
+## Launching the viewer
 
-![Main window with dual preview](resources/screenshots/viewer-overview.png "WQV-Viewer main window showing the thumb list, original preview, and upscaled preview")
-
-
-## Project layout
-
-```
-WQV-Viewer/
-├── README.md               # This document
-├── pyproject.toml          # Project metadata & dependencies
-├── resources/              # Custom toolbar & application icons
-├── tests/                  # Pytest test-suite and sample assets
-├── wqv_viewer/             # Runtime package (parser + GUI)
-└── wqv_upscale_trainer/    # CLI trainer for custom NeoSR weights
-```
-
-## Getting started
-
-Ensure you have Python 3.9+ with pip available. From the ``WQV-Viewer``
-folder install the package in editable mode (this pulls in Pillow, PyQt6 and
-pytest):
-
-```bash
-python -m pip install -e .[dev]
-```
-
-> ℹ️ The installation pulls in Real-ESRGAN and PyTorch for the AI upscaler.
-> The first time you pick the AI method the pretrained weights (≈70 MB) are
-> downloaded to ``WQV-Viewer/models/realesrgan`` and re-used afterwards. The
-> downloader now prefers the official GitHub release assets and falls back to
-> Hugging Face if required. If you are offline, grab the models you need from
-> the release page (for example
-> [`RealESRGAN_x2plus.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth),
-> [`RealESRGAN_x4plus.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth),
-> [`RealESRGAN_x2.pth`](https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x2.pth),
-> [`RealESRGAN_x4.pth`](https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x4.pth),
-> [`RealESRGAN_x8.pth`](https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x8.pth),
-> [`realesr-general-x4v3.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth),
-> [`realesr-general-wdn-x4v3.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-wdn-x4v3.pth),
-> [`RealESRGAN_x4plus_anime_6B.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth),
-> [`realesr-animevideov3.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth))
-> and drop them into that folder ahead of time. At runtime the viewer will try
-> your GPU first (including half-precision) and automatically fall back to
-> full-precision or CPU execution if the driver rejects the request, avoiding
-> the hard crashes older CUDA stacks were triggering. Prefer the new **Device**
-> selector in the GUI if you want to force GPU-only or CPU-only execution.
-
-### Real-ESRGAN prerequisites
-
-Real-ESRGAN depends on a small toolchain beyond ``torch`` and ``realesrgan`` itself.
-The editable install already brings these in, but if you are composing your own
-environment or trimming optional extras make sure the following packages remain
-available (mirroring the upstream [`requirements.txt`](https://github.com/xinntao/Real-ESRGAN/blob/master/requirements.txt)):
-
-- ``basicsr>=1.4.2``
-- ``facexlib>=0.2.5``
-- ``gfpgan>=1.3.5`` (needed for the optional face-enhancement toggle)
-- ``opencv-python>=4.5``
-- ``torchvision>=0.16``
-- ``tqdm``
-
-If you ever uninstall these libraries, reinstall with ``python -m pip install -e .[dev]``
-to restore the full AI upscaler feature set.
-
-Launch the viewer with:
+Run the desktop application from the project root:
 
 ```bash
 python -m wqv_viewer
 ```
 
-Use **File → Open WQVLinkDB…** to select a Palm ``.pdb`` archive and populate
-the browser with every image inside. Select one or more frames in the list and
-choose **File → Export Selected…** to save them as PNG files. The right-hand
-pane shows the original frame alongside the selected upscaled preview and the
-decoded metadata that is currently captured (raw size and data offset for
-monochrome dumps).
+### Loading wristcam archives
+- Use **File -> Open WQVLinkDB...** to browse for Palm backups (`.pdb`). The viewer extracts every record into the thumbnail grid and updates the metadata pane with filename, capture time (when available), resolution, and Palm record identifiers.
+- Drag and drop a `.pdb` file onto the window instead of using the dialog. Drops are validated before loading.
+- The **Open Recent** submenu tracks the last ten databases. Missing files are removed from the list automatically.
+- **File -> Clear** unloads the current session while leaving recent history intact. The last database, selection signature, pipeline settings, and window geometry are restored on the next launch via `QSettings`.
 
-### Moving photos from the watch to your PC (Palm OS bridge)
+### Navigating and previewing
+- Thumbnails support standard Ctrl/Shift multi-selection. Selecting an item refreshes the dual preview panes: the original capture on the left and the active pipeline result on the right.
+- The metadata group stays in sync with the selection so you can inspect record numbers before deleting or exporting.
+- Fit/Actual zoom modes are exposed as toggle actions and tool buttons; `Ctrl` + mouse wheel, standard Zoom In/Out shortcuts, and `Ctrl+0` are all supported. Zoom mode applies to both panes simultaneously.
+- The thumbnail list exposes the registered context actions, including **Delete Selected**, so you can manage records without leaving the viewer.
 
-The recommended path is to offload images to a Palm handheld over infrared and
-then sync the Palm backup database back to your computer. The outline below
-combines the official Casio Palm app with the field notes in
-[Sam Mortimer's deep dive](https://segamadebaddecisions.wordpress.com/2024/06/30/the-casio-wrist-camera-wqv-1-absolutely-unwilling-to-share-its-secrets-with-a-pc/) and this
-[watch-to-Palm transfer video](https://www.youtube.com/shorts/se8XrWMHHeo).
+### Upscaling pipeline controls
+- The **Conventional** row lets you choose a Pillow resampler (nearest, bilinear, bicubic, Lanczos) and one of the allowed scale factors (2x through 6x).
+- The **AI** row activates Real-ESRGAN models. Pick a variant, select the scales it supports (2x, 4x, or 8x depending on the weights), and choose whether the AI stage runs before or after the conventional stage via the **Order** combo box.
+- The **Device** selector honours Auto (GPU with CPU fallback), GPU only, or CPU only. If a GPU attempt fails, the pipeline retries on CPU and shows the fallback in the status summary.
+- Every upscale runs in a background worker thread. The status bar hosts a progress widget with a **Cancel** button so you can interrupt long jobs without freezing the UI.
+- The primary status label reports the active pipeline summary, including the models used, scale multipliers, and whether a fallback policy was triggered.
 
-1. **Prepare a Palm with IR** – Palm m100/m105/m125 or any Palm OS 3.3–4.x
-  device with an infrared window works well. Install Palm Desktop/HotSync on
-  your PC (Windows XP-era versions run fine inside a VM if you prefer).
-2. **Install WQV Link on the Palm** – The repo bundles the official installer
-  under ``tools/wqvlinkpalm11`` (Casio's original ``wqvlinkpalm11.lzh``). Add the WQVLink.prc payload to the Palm Install Tool, then HotSync.
-  A new ``WQV Link`` icon should appear on the handheld.
-3. **Beam the photos from the watch** – On the Palm, open ``WQV Link`` and tap
-  **Tools → Receive All** so it begins listening. On the watch, align the IR
-  window with the Palm and choose ``DATA COMM → SEND → OTHER DEVICE`` (or the
-  ``Send All`` entry on later models). Keep the devices steady until the Palm
-  shows a completion dialog; a full 100-shot transfer takes a couple of minutes.
+### Exporting images
+- Highlight one or more thumbnails and pick **File -> Export Selected...**. The viewer runs the current pipeline for each selection, writes PNG files, and stores a matching `.json` sidecar containing the full metadata payload.
+- When filenames collide, an incrementing numeric suffix is applied to both the PNG and JSON to avoid overwriting prior exports.
+- The last export directory is remembered per session. Success, partial failure, and error cases are surfaced through the status bar.
 
-  <img src="resources/screenshots/wqv-wrist-camera-palm-recieve-all.png" alt="Palm WQV Link app ready to receive all images over infrared" width="33%" />
+### Managing Palm databases
+- **Delete Selected** removes records directly from the backing `WQVLinkDB.PDB`. Selections spanning multiple databases are rejected to prevent accidental cross edits.
+- Before deleting, the viewer confirms how many records will be purged and cross-checks metadata to ensure a valid Palm record mapping exists.
+- After deletion the database is reloaded in-place so you can verify the updated contents immediately.
 
-4. **HotSync back to the desktop** – Run another HotSync. Palm Desktop writes a
-  ``WQVLinkDB.PDB`` backup under
-  ``%USERPROFILE%\Documents\Palm OS Desktop\<HotSyncName>\Backup`` (colour
-  watches will emit per-image ``CASIJPG*.PDB`` files instead).
-5. **Work from a copy of the backup** – Copy ``WQVLinkDB.PDB`` to a separate
-  working folder before opening it so the Palm Desktop backup remains intact.
-  Point WQV-Viewer at that copy via **File → Open WQVLinkDB…** to unpack and
-  browse the images locally. When you prefer standalone bitmaps on disk, you
-  can also drop the same ``.pdb`` into
-  [WQV_PDB_Tools](https://github.com/nnnn2cat/WQV_PDB_Tools) to batch-export
-  BMP/PNG files.
+### Session persistence and quality-of-life
+- Window geometry, splitter positions, zoom mode, pipeline configuration, last loaded database, and last selection are all saved in your user profile (`QSettings`).
+- Application icons ship under `resources/` for both Windows and cross-platform use. The window icon refreshes automatically if the palette changes.
+- Logs follow the standard Python logging configuration and are written alongside your session profile, making it easy to inspect pipeline failures.
 
-### Upscaling controls
+## Upscaling models
 
-Every image is shown twice: the original resolution on the left and an
-upscaled preview on the right. Pick a method (nearest/bilinear/bicubic/Lanczos
-or the AI-powered Real-ESRGAN model), a scale factor (2×, 3×, 4×, or 8× when available), a
- device preference (Auto/GPU/CPU), and the stage order using the new **Order**
- dropdown (``Conventional → AI`` or ``AI → Conventional``) from the toolbar above the
-previews to refresh the upscale. The Real-ESRGAN weights are cached locally
-after the first run under ``WQV-Viewer/models/realesrgan``.
-The conventional stage runs first by default, so flipping the order is now a single click when you prefer to apply AI detail enhancement before a final resample.
-The AI dropdown now exposes multiple Real-ESRGAN flavours so you can pick the
-one that suits your footage:
+### Bundled Real-ESRGAN variants
+- Real-ESRGAN Plus 2x and 4x (classic RRDBNet models).
+- Real-ESRGAN Sber 2x, 4x, and 8x (ai-forever RRDBNet weights for aggressive upscaling).
+- General x4v3 and General x4v3 WDN (SRVGG weights with optional denoise blend control).
+- Anime x4plus 6B and AnimeVideo v3 (tailored for stylised footage but useful for crisp wristcam lines).
+- RealESRGAN general-purpose weights live under `models/realesrgan` and can be refreshed manually if new upstream releases appear.
 
-- **Real-ESRGAN Plus (2×/4×)** – the classic high-quality RRDBNet models.
-- **Real-ESRGAN (Sber 2×/4×/8×)** – the ai-forever variants with an extended
-  8× RRDBNet stack for aggressive upscaling straight from the Hugging Face release.
-- **General x4v3** – the lighter, denoise-tunable SRVGG model (defaults to a
-  50/50 blend of the standard and WDN weights).
-- **General x4v3 (denoise)** – the pure WDN weights for extra smoothing.
-- **Anime x4plus (6B)** – the RRDBNet model tuned for crisp anime line art.
-- **AnimeVideo v3** – the ultra-small SRVGG model optimised for anime videos.
-- **WQV NeoSR (custom x4)** – loads a local ``wqv_neosr_x4.pth`` checkpoint produced by the trainer.
+### Repository custom models
+- `models/custom/wqv_neosr_x4.pth` is a trainer-produced RRDB variant tuned on WQV monochrome material for 4x enlargements.
+- `models/custom/wqv_neosr_x8.pth` extends the same recipe to 8x upscaling by chaining an extra NeoSR upsample stage.
+- Both models were trained with high-resolution imagery sourced from the [Flickr2K dataset](https://www.kaggle.com/datasets/daehoyang/flickr2k).
+- Both weights are auto-discovered on startup and appear in the AI dropdown as `Custom: wqv_neosr_x4 (x4)` and `Custom: wqv_neosr_x8 (x8)`. Select them whenever you want a wristcam-biased baseline before or after conventional resampling.
 
-### Training your own NeoSR weights
+### Adding your own weights
+- Drop additional `.pth` files into `models/custom`. Include the target scale (`x2`, `x4`, or `x8`) in the filename so the loader can infer supported scales.
+- Restart the viewer to pick up new weights. Each file is listed under a `Custom:` label based on its stem so you can tell variants apart.
+- Stale copies in `models/realesrgan` are cleaned up automatically when their custom counterpart disappears, keeping the directory tidy.
 
-The companion CLI, ``wqv-upscale-trainer``, packages everything you need to fine-tune a NeoSR-style generator on high resolution scans.
+## Trainer CLI
 
-**1. Gather training material**
-- Place lossless source images (PNG/TIFF) in a single directory. The trainer automatically derives synthetic low-resolution crops, so you only need HR references.
-- Aim for at least a few hundred crops worth of material; mix in varied lighting to avoid overfitting.
+### What the trainer does
+- Scans a source directory for PNG/JPEG/TIFF assets and creates reproducible synthetic low-res/high-res pairs that mimic WQV compression and noise.
+- Splits the dataset into train/validation/test partitions with deterministic shuffling and exposes per-split dataloaders.
+- Supports optional monochrome simulation (`--monochrome-style`, `--monochrome-levels`, `--monochrome-noise`) to better match wristcam tonal ranges.
+- Trains RRDB/NeoSR generators with automatic mixed precision, gradient accumulation, EMA tracking, and Adam hyper-parameters that you can override.
+- Writes checkpoints at configurable intervals, including deployable `*_deploy.pth` snapshots and TensorBoard summaries (scalars plus LR/SR/HR comparison grids).
 
-**2. Launch a run**
+### Run a training session
 
 ```bash
-wqv-upscale-trainer path/to/source-images run-workspace --scale 4 --steps 100000 \
-  --batch-size 6 --grad-accum-steps 4 --tensorboard --monochrome-style
+wqv-upscale-trainer data/highres workspace/run-x4 --scale 4 --steps 150000 \
+  --batch-size 8 --grad-accum-steps 2 --tensorboard --monochrome-style \
+  --perceptual-weight 0.05 --device auto
 ```
 
-- ``run-workspace`` is created automatically; logs, checkpoints, and TensorBoard events land there.
-- Adjust ``--device`` (``auto``/``cuda``/``cpu``), ``--learning-rate``, or ``--perceptual-weight`` to experiment.
-- Pass ``--monochrome-style`` to convert every synthetic patch to a WQV-like monochrome look (4-bit quantisation and sensor noise). Use ``--monochrome-levels`` and ``--monochrome-noise`` to fine-tune the tone curve if you have reference material with a different feel.
+- `data/highres` contains your lossless source material; the trainer augments and crops it automatically.
+- `workspace/run-x4` is created on demand and stores configs, logs, checkpoints, and final models.
+- Adjust `--scale` to 2, 4, or 8; the generator architecture adapts automatically.
+- Resume training any time with `--resume path/to/checkpoint.pth`.
+- Disable AMP with `--no-amp` when running strictly on CPU hardware.
 
-**3. Monitor progress**
-- ``trainer.log`` captures per-step losses and validation PSNR.
-- If ``--tensorboard`` is enabled, launch ``tensorboard --logdir run-workspace/tensorboard`` to visualise metrics. Alongside the scalar curves, the trainer now publishes a ``comparison/lr_sr_hr`` image grid at the configured interval so you can inspect low-resolution crops, current super-res outputs, and ground-truth targets side-by-side. Adjust ``--image-log-interval`` and ``--image-log-max-samples`` to tune how often and how many examples are emitted.
-- Intermediate checkpoints live under ``run-workspace/checkpoints`` in case you want to resume with ``--resume-from``. Each checkpoint is accompanied by a ``*_deploy.pth`` sibling that already contains the slim ``{"params": ...}`` payload ready for the viewer.
+### Outputs and deployment
+- `workspace/run-x4/trainer.log` captures console logs for later review.
+- `workspace/run-x4/dataset_splits.json` records the exact mapping between files and splits.
+- `workspace/run-x4/checkpoints/` stores periodic checkpoints alongside `*_deploy.pth` exports that already contain the slim `{"params": ...}` payload.
+- The best EMA snapshot is saved to `workspace/run-x4/models/wqv_neosr_x4.pth`; copy it into `models/custom` so the viewer can pick it up on the next launch.
+- The repository’s own `wqv_neosr_x4.pth` and `wqv_neosr_x8.pth` under `models/custom` were produced with this workflow and serve as reference baselines.
 
-**4. Install the trained model in the viewer**
-- The final EMA export is written to ``run-workspace/models/wqv_neosr_x4.pth``.
-- Copy that file into ``models/realesrgan`` (overwriting the previous version if present).
-- The exported weights are already stored in the slim ``{"params": ...}`` format, so the viewer can load **WQV NeoSR (custom x4)** without further conversion.
-- If you maintain multiple variants, store them beside the stock weights and swap them in/out or rename ``wqv_neosr_x4.pth`` before launching the viewer.
-- Run ``wqv-upscale-trainer --help`` for the full list of configuration switches, including dataset splits, EMA decay, and gradient clipping.
+## Testing
 
-## Running the tests
+Run the automated tests from the project root:
 
 ```bash
 python -m pytest
 ```
 
-The suite uses the sample ``.pdr`` file under ``tests/data`` and runs a headless
-(``QT_QPA_PLATFORM=offscreen``) smoke test for the Qt main window.
+The suite covers the parser, pipeline helpers, and a headless Qt smoke test (`QT_QPA_PLATFORM=offscreen`) using the sample assets under `tests/data`.
+
+## Troubleshooting
+- **GPU fallback in status bar**: the viewer automatically retries on CPU when the GPU driver rejects a kernel launch; check your CUDA installation if this happens unexpectedly.
+- **Missing Qt platform plugin**: ensure `python -m pip install -e .[dev]` completed successfully and that you are running within the same environment.
+- **Model not listed in the AI dropdown**: confirm the `.pth` file name contains `x2`, `x4`, or `x8` and that it lives in `models/custom`.
+- **Trainer cannot import TensorBoard**: install it explicitly with `python -m pip install tensorboard` when you pass `--tensorboard`.
+
+## Credits
+
+WQV-Viewer builds upon the research shared in the community project [WQV_PDB_Tools](https://github.com/nnnn2cat/WQV_PDB_Tools) and the outstanding Real-ESRGAN ecosystem maintained at [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN). All trademarks belong to their respective owners; please review upstream licenses when redistributing model weights.
 
 

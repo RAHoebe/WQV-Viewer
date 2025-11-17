@@ -82,6 +82,7 @@ if [ "${JUPYTER_ENABLE}" = "1" ]; then
         --ServerApp.password='' \
         --ServerApp.allow_origin='*' \
         --ServerApp.disable_check_xsrf=True \
+        --ServerApp.allow_root=True \
         --ServerApp.root_dir="${JUPYTER_ROOT}" \
         --ServerApp.open_browser=False \
         >/var/log/jupyter.log 2>&1 &
@@ -101,9 +102,14 @@ if [ "${AUTO_LAUNCH}" != "1" ] && [ "$#" -gt 0 ]; then
     CHILD_PIDS+=("$!")
 fi
 
-# Wait on child processes
+# Wait on child processes (ignore individual failures but exit when none remain)
 while true; do
-    if ! wait -n 2>/dev/null; then
+    wait -n 2>/dev/null
+    status=$?
+    if [ "$status" -eq 127 ]; then
         break
+    fi
+    if [ "$status" -ne 0 ]; then
+        echo "Child process terminated with status $status" >&2
     fi
 done
