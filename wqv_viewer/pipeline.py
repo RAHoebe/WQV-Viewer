@@ -75,7 +75,7 @@ class PipelineConfig:
     enable_ai: bool = False
     ai_id: Optional[str] = None
     ai_scale: Optional[int] = None
-    ai_before_conventional: bool = False
+    ai_before_conventional: bool = True
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -99,7 +99,7 @@ class PipelineConfig:
             enable_ai=bool(data.get("enable_ai", False)),
             ai_id=_as_optional_str(data.get("ai_id")),
             ai_scale=_as_optional_int(data.get("ai_scale")),
-            ai_before_conventional=bool(data.get("ai_before_conventional", False)),
+            ai_before_conventional=bool(data.get("ai_before_conventional", True)),
         )
 
 

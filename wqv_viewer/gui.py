@@ -22,6 +22,9 @@ from PyQt6.QtCore import (
     QEvent,
     QPointF,
     QRectF,
+    QItemSelectionModel,
+    QMimeData,
+    QUrl,
 )
 from PyQt6.QtGui import (
     QAction,
@@ -36,6 +39,9 @@ from PyQt6.QtGui import (
     QWheelEvent,
     QKeySequence,
     QShortcut,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -332,7 +338,7 @@ class ImageBrowser(QWidget):
         left_layout.setSpacing(6)
 
         self.list_widget = QListWidget()
-        self.list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.list_widget.setViewMode(QListView.ViewMode.IconMode)
         self.list_widget.setIconSize(QSize(120, 120))
         self.list_widget.setResizeMode(QListView.ResizeMode.Adjust)
@@ -487,7 +493,7 @@ class ImageBrowser(QWidget):
         self.order_combo.clear()
         self.order_combo.addItem("Conventional → AI", "conventional-first")
         self.order_combo.addItem("AI → Conventional", "ai-first")
-        self.order_combo.setCurrentIndex(0)
+        self.order_combo.setCurrentIndex(1)
         self.order_combo.blockSignals(False)
 
     # --------------------------------------------------------------- data-load
@@ -539,11 +545,35 @@ class ImageBrowser(QWidget):
 
     def selected_images(self) -> List[WQVImage]:
         images: List[WQVImage] = []
-        for item in self.list_widget.selectedItems():
+        selected_indexes = sorted(self.list_widget.selectedIndexes(), key=lambda index: index.row())
+        seen_rows: set[int] = set()
+        for model_index in selected_indexes:
+            row = model_index.row()
+            if row in seen_rows:
+                continue
+            seen_rows.add(row)
+            item = self.list_widget.item(row)
+            if item is None:
+                continue
             candidate = item.data(Qt.ItemDataRole.UserRole)
             if isinstance(candidate, WQVImage):
                 images.append(candidate)
         return images
+
+    def run_pipeline_for_image(self, image: WQVImage) -> PipelineResult:
+        pipeline_config = self._pipeline_config()
+        pipeline = build_pipeline(
+            pipeline_config,
+            conventional_map=self._conventional_map,
+            ai_map=self._ai_map,
+        )
+        device_policy = self._selected_device_policy()
+        source = image.image.copy()
+        return run_pipeline(
+            pipeline,
+            source,
+            original_policy=device_policy,
+        )
 
     def set_context_actions(self, actions: Sequence[QAction]) -> None:
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
@@ -700,12 +730,26 @@ class ImageBrowser(QWidget):
 
     # -------------------------------------------------------------- selections
     def _on_selection_changed(self, *_args) -> None:
-        item = self.list_widget.currentItem()
-        image = item.data(Qt.ItemDataRole.UserRole) if item else None
+        item = self._first_selected_item()
+        if item is None:
+            self._set_current_image(None)
+            return
+
+        if self.list_widget.currentItem() is not item:
+            self.list_widget.setCurrentItem(item, QItemSelectionModel.SelectionFlag.NoUpdate)
+
+        image = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(image, WQVImage):
             self._set_current_image(image)
         else:
             self._set_current_image(None)
+
+    def _first_selected_item(self) -> Optional[QListWidgetItem]:
+        selected_indexes = self.list_widget.selectedIndexes()
+        if not selected_indexes:
+            return None
+        first_index = min(selected_indexes, key=lambda index: index.row())
+        return self.list_widget.item(first_index.row())
 
     def _set_current_image(self, image: Optional[WQVImage]) -> None:
         if image is not self._current_image:
@@ -1068,6 +1112,7 @@ class MainWindow(QMainWindow):
 
         self.browser = ImageBrowser(async_enabled=enable_async_upscale)
         self.setCentralWidget(self.browser)
+        self.setAcceptDrops(True)
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -1401,51 +1446,132 @@ class MainWindow(QMainWindow):
         count = self._load_pdb(Path(path))
         self.status_bar.showMessage(f"Loaded {count} images from {Path(path).name}", 5000)
 
-    def export_selected(self) -> None:
-        results = self.browser.last_pipeline_results()
-        if not results:
-            self.status_bar.showMessage("No upscaled image to export", 3000)
-            return
+    def _pdb_path_from_mime(self, mime_data: QMimeData | None) -> Optional[Path]:
+        if mime_data is None or not mime_data.hasUrls():
+            return None
+        for url in mime_data.urls():
+            if not isinstance(url, QUrl) or not url.isLocalFile():
+                continue
+            try:
+                candidate = Path(url.toLocalFile()).resolve()
+            except Exception:
+                continue
+            if candidate.suffix.lower() == ".pdb" and candidate.exists():
+                return candidate
+        return None
 
-        source = self.browser.current_image()
-        if source is None:
-            self.status_bar.showMessage("No source image available", 3000)
-            return
-
-        stem = self.browser.current_image_basename() or "upscaled"
-        default_name = f"{stem}_upscaled.png"
-        default_path = Path.home() / default_name
-
-        path_str, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save upscaled image",
-            str(default_path),
-            "PNG Images (*.png)",
-        )
-        if not path_str:
-            return
-
-        path = Path(path_str)
-        if path.suffix.lower() != ".png":
-            path = path.with_suffix(".png")
-
-        result = results.get("primary")
-        if result is None:
-            self.status_bar.showMessage("No upscaled preview available", 3000)
-            return
-
+    def _open_dropped_database(self, path: Path) -> None:
         try:
-            export_result(
-                path,
-                source,
-                result,
-                extra_metadata={"pipeline_name": "primary"},
-            )
-        except Exception as exc:
-            self.status_bar.showMessage(f"Failed to save image: {exc}", 5000)
+            count = self._load_pdb(path)
+        except Exception as exc:  # pragma: no cover - runtime guard
+            logger.warning("Failed to open dropped database %s: %s", path, exc, exc_info=True)
+            self.status_bar.showMessage(f"Failed to open {path.name}: {exc}", 6000)
+            return
+        suffix = "image" if count == 1 else "images"
+        self.status_bar.showMessage(f"Loaded {count} {suffix} from {path.name}", 5000)
+
+    def export_selected(self) -> None:
+        selected = self.browser.selected_images()
+        if not selected:
+            self.status_bar.showMessage("Select one or more images to export", 4000)
             return
 
-        self.status_bar.showMessage(f"Saved {path.name}", 5000)
+        start_dir = self._settings.value("session/lastExportDirectory", "")
+        if isinstance(start_dir, str) and start_dir:
+            initial_directory = Path(start_dir)
+        else:
+            initial_directory = Path.home()
+
+        directory_str = QFileDialog.getExistingDirectory(
+            self,
+            "Select export folder",
+            str(initial_directory),
+        )
+        if not directory_str:
+            return
+
+        destination_dir = Path(directory_str)
+        try:
+            destination_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            self.status_bar.showMessage(f"Cannot use {destination_dir}: {exc}", 6000)
+            return
+
+        used_names: set[str] = set()
+        successes = 0
+        failures: List[str] = []
+
+        for index, image in enumerate(selected, start=1):
+            try:
+                result = self.browser.run_pipeline_for_image(image)
+            except Exception as exc:
+                logger.error("Failed to upscale %s during export: %s", image.path, exc, exc_info=True)
+                failures.append(f"{image.path.name}: {exc}")
+                continue
+
+            destination = self._build_export_destination(destination_dir, image, used_names, index=index)
+            try:
+                export_result(
+                    destination,
+                    image,
+                    result,
+                    extra_metadata={"pipeline_name": "primary"},
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to export %s to %s: %s",
+                    image.path,
+                    destination,
+                    exc,
+                    exc_info=True,
+                )
+                failures.append(f"{image.path.name}: {exc}")
+                continue
+
+            successes += 1
+
+        if successes:
+            self._settings.setValue("session/lastExportDirectory", str(destination_dir))
+            self._settings.sync()
+
+        if successes and not failures:
+            suffix = "s" if successes != 1 else ""
+            self.status_bar.showMessage(f"Exported {successes} image{suffix} to {destination_dir}", 5000)
+        elif successes and failures:
+            suffix = "s" if successes != 1 else ""
+            self.status_bar.showMessage(
+                f"Exported {successes} image{suffix} to {destination_dir} ({len(failures)} failed)",
+                6000,
+            )
+        else:
+            message = failures[0] if failures else "Failed to export images"
+            self.status_bar.showMessage(message, 6000)
+
+    def _build_export_destination(
+        self,
+        directory: Path,
+        image: WQVImage,
+        used_names: set[str],
+        *,
+        index: int,
+    ) -> Path:
+        stem = image.path.stem or image.path.name or ""
+        stem = stem.strip().strip(".")
+        if not stem:
+            stem = f"image_{index:03d}"
+        candidate = directory / f"{stem}.png"
+        counter = 1
+        while (
+            candidate.exists()
+            or candidate.with_suffix(".json").exists()
+            or candidate.name.lower() in used_names
+            or candidate.with_suffix(".json").name.lower() in used_names
+        ):
+            candidate = directory / f"{stem}_{counter:03d}.png"
+            counter += 1
+        used_names.add(candidate.name.lower())
+        used_names.add(candidate.with_suffix(".json").name.lower())
+        return candidate
 
     # ------------------------------------------------------------ test hooks
     def _load_pdb(self, path: Path) -> int:
@@ -1661,6 +1787,26 @@ class MainWindow(QMainWindow):
         )
         self._save_recent_files()
         self._settings.sync()
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # type: ignore[override]
+        if self._pdb_path_from_mime(event.mimeData()) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # type: ignore[override]
+        if self._pdb_path_from_mime(event.mimeData()) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:  # type: ignore[override]
+        path = self._pdb_path_from_mime(event.mimeData())
+        if path is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self._open_dropped_database(path)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._save_session_state()

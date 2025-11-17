@@ -226,6 +226,27 @@ def test_build_pipeline_ai_first_option() -> None:
     assert [stage[0] for stage in pipeline] == ["AI", "Conventional"]
 
 
+def test_build_pipeline_defaults_to_ai_first() -> None:
+    conventional = _StubUpscaler("conv", "Conventional")
+    ai = _StubUpscaler("ai", "AI")
+    config = PipelineConfig(
+        enable_conventional=True,
+        conventional_id="conv",
+        conventional_scale=2,
+        enable_ai=True,
+        ai_id="ai",
+        ai_scale=2,
+    )
+
+    pipeline = build_pipeline(
+        config,
+        conventional_map={"conv": conventional},
+        ai_map={"ai": ai},
+    )
+
+    assert [stage[0] for stage in pipeline] == ["AI", "Conventional"]
+
+
 def test_real_esrgan_scales() -> None:
     method = ai_upscalers()[0]
     assert tuple(method.supported_scales()) == (2, 4)

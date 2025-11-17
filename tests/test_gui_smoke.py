@@ -4,8 +4,10 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QApplication, QListView
+from PyQt6.QtCore import QMimeData, QSettings, QUrl
+from PyQt6.QtWidgets import QApplication, QFileDialog, QListView, QListWidget
+
+import pytest
 
 from wqv_viewer.gui import MainWindow
 
@@ -19,6 +21,8 @@ def test_main_window_constructs(tmp_path) -> None:
         assert window.browser.conventional_scale_combo.itemText(0) == "2×"
         assert window.browser.ai_scale_combo.currentText() == "2×"
         assert window.browser.list_widget.viewMode() == QListView.ViewMode.IconMode
+        assert window.browser.list_widget.selectionMode() == QListWidget.SelectionMode.ExtendedSelection
+        assert window.browser.order_combo.currentData() == "ai-first"
         assert all(value == "—" for value in window.browser.metadata_snapshot().values())
     finally:
         window.deleteLater()
@@ -76,6 +80,93 @@ def test_export_upscaled_image(tmp_path) -> None:
         target = tmp_path / "upscaled.png"
         assert window._export_upscaled_image(target)
         assert target.exists()
+    finally:
+        window.deleteLater()
+        if QApplication.instance() is app:
+            app.quit()
+
+
+def test_multi_selection_uses_first_item(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(Path(tmp_path) / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings, enable_async_upscale=False)
+    try:
+        pdb_path = _copy_pdb_fixture(Path(tmp_path))
+        window._load_pdb(pdb_path)
+
+        list_widget = window.browser.list_widget
+        if list_widget.count() < 2:
+            pytest.skip("Fixture does not provide multiple images")
+
+        list_widget.clearSelection()
+        list_widget.item(0).setSelected(True)
+        list_widget.item(1).setSelected(True)
+        app.processEvents()
+
+        selected = window.browser.selected_images()
+        assert selected
+        assert window.browser.current_image() == selected[0]
+        assert list_widget.currentRow() == 0
+    finally:
+        window.deleteLater()
+        if QApplication.instance() is app:
+            app.quit()
+
+
+def test_export_selected_directory(tmp_path, monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(Path(tmp_path) / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings, enable_async_upscale=False)
+    try:
+        pdb_path = _copy_pdb_fixture(Path(tmp_path))
+        window._load_pdb(pdb_path)
+
+        list_widget = window.browser.list_widget
+        if list_widget.count() < 2:
+            pytest.skip("Fixture does not provide enough images")
+
+        list_widget.clearSelection()
+        list_widget.item(0).setSelected(True)
+        list_widget.item(1).setSelected(True)
+        app.processEvents()
+
+        export_dir = Path(tmp_path) / "exports"
+        export_dir.mkdir()
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_, **__: str(export_dir))
+
+        window.export_selected()
+
+        png_exports = sorted(export_dir.glob("*.png"))
+        json_exports = sorted(export_dir.glob("*.json"))
+        assert len(png_exports) == 2
+        assert len(json_exports) == 2
+        assert window._settings.value("session/lastExportDirectory") == str(export_dir)
+    finally:
+        window.deleteLater()
+        if QApplication.instance() is app:
+            app.quit()
+
+
+def test_pdb_path_from_mime_filters_non_pdb(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(Path(tmp_path) / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings, enable_async_upscale=False)
+    try:
+        valid_path = tmp_path / "database.pdb"
+        valid_path.write_bytes(b"")
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(valid_path))])
+        assert window._pdb_path_from_mime(mime) == valid_path.resolve()
+
+        invalid = tmp_path / "image.pdr"
+        invalid.write_bytes(b"")
+        mime_invalid = QMimeData()
+        mime_invalid.setUrls([QUrl.fromLocalFile(str(invalid))])
+        assert window._pdb_path_from_mime(mime_invalid) is None
+
+        remote_mime = QMimeData()
+        remote_mime.setUrls([QUrl("https://example.com/file.pdb")])
+        assert window._pdb_path_from_mime(remote_mime) is None
     finally:
         window.deleteLater()
         if QApplication.instance() is app:
