@@ -1,0 +1,55 @@
+# WQV Viewer Docker Image
+
+This guide explains how to build and run a containerized environment for **WQV Viewer** and **wqv_upscale_trainer** with GPU support and a browser-based desktop session.
+
+## Prerequisites
+- Docker Engine 24+
+- NVIDIA driver and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- (Optional) Docker Hub account for publishing images
+
+## Build the image
+```bash
+docker build -t wqv-viewer:latest -f Dockerfile .
+```
+
+## Run locally
+```bash
+docker run \
+  --rm \
+  --gpus all \
+  -p 6080:6080 \
+  -p 8888:8888 \
+  -e VNC_PASSWORD=yourStrongPassword \
+  -e RESOLUTION=1600x900 \
+  -v "/absolute/path/to/wqv-databases":/data \
+  wqv-viewer:latest
+```
+
+Then open **http://localhost:6080** for the browser-based desktop or **http://localhost:8888** for the bundled JupyterLab instance. The desktop ships with launchers for **WQV Viewer** and the **Upscale Trainer**; disable auto-launch with `-e AUTO_LAUNCH_VIEWER=0` if you prefer to start them manually.
+
+- Use the viewer icon on the desktop or in the Applications menu to relaunch the GUI.
+- Use the trainer icon to open an Xfce terminal that runs `wqv-upscale-trainer` and keeps the shell open afterward.
+- Access `/data` from either the viewer or JupyterLab to work with your Palm databases and training assets.
+- From JupyterLab you can launch notebooks or start new terminal tabs via the Launcher, providing a script-friendly workflow alongside the GUI.
+
+The bind mount exposes your host Palm database directory at `/data` inside the container. Adjust the host path to match your environment (on Windows use `"D:/"` or another drive letter). Browse to `/data` from the viewer to open or export files with full read/write access.
+
+## Push to Docker Hub
+```bash
+docker tag wqv-viewer:latest <username>/wqv-viewer:latest
+docker login
+docker push <username>/wqv-viewer:latest
+```
+
+## Environment variables
+- `VNC_PASSWORD`: password for browser VNC session (default `viewonly`)
+- `VNC_DISABLE_PASSWORD`: set to `1` to allow passwordless access (uses insecure `-SecurityTypes None`)
+- `RESOLUTION`: desktop resolution (default `1280x800`)
+- `AUTO_LAUNCH_VIEWER`: set to `0` to stop auto-starting the GUI
+- `NOVNC_PORT`: change the exposed noVNC port (default `6080`)
+- `JUPYTER_ENABLE`: set to `0` to skip launching JupyterLab (default `1`)
+- `JUPYTER_PORT`: change the exposed JupyterLab port (default `8888`)
+- `JUPYTER_TOKEN`: supply a token for Jupyter authentication (blank by default)
+- `JUPYTER_ROOT`: working directory served by JupyterLab (default `/data`)
+
+Mount Palm database directories or model folders into `/data` (or another mount point) using `-v` or compose volumes. Access notebooks under `/data` via JupyterLab, or use the desktop shortcuts inside the virtual environment.
