@@ -5,42 +5,58 @@ set -euo pipefail
 VNC_DISPLAY=":1"
 VNC_PORT="${VNC_PORT:-5901}"
 NOVNC_PORT="${NOVNC_PORT:-6080}"
-VNC_PASSWORD="${VNC_PASSWORD:-viewonly}"
+VNC_PASSWORD="${VNC_PASSWORD:-wqv}"
 DISABLE_PASSWORD="${VNC_DISABLE_PASSWORD:-0}"
-RESOLUTION="${RESOLUTION:-1280x800}"
+RESOLUTION="${RESOLUTION:-1920x1080}"
 DEPTH="${VNC_DEPTH:-24}"
-AUTO_LAUNCH="${AUTO_LAUNCH_VIEWER:-1}"
+AUTO_LAUNCH="${AUTO_LAUNCH_VIEWER:-0}"
 JUPYTER_ENABLE="${JUPYTER_ENABLE:-1}"
 JUPYTER_PORT="${JUPYTER_PORT:-8888}"
 JUPYTER_TOKEN="${JUPYTER_TOKEN:-}"
-JUPYTER_ROOT="${JUPYTER_ROOT:-/data}"
+JUPYTER_ROOT="${JUPYTER_ROOT:-${HOME:-/home/wqv}}"
+CONDA_ENV_NAME="${CONDA_ENV_NAME:-wqv}"
 
 export DISPLAY="${VNC_DISPLAY}"
 
-mkdir -p /root/.vnc "${JUPYTER_ROOT}"
+HOME_DIR="${HOME:-/home/wqv}"
+VNC_DIR="${HOME_DIR}/.vnc"
+LOG_DIR="${HOME_DIR}/.cache/wqv"
+mkdir -p "${VNC_DIR}" "${JUPYTER_ROOT}" "${LOG_DIR}"
+
+if [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+    # shellcheck disable=SC1091
+    source /opt/conda/etc/profile.d/conda.sh
+    conda activate "${CONDA_ENV_NAME}"
+elif command -v conda >/dev/null 2>&1; then
+    eval "$(conda shell.bash hook)"
+    conda activate "${CONDA_ENV_NAME}"
+else
+    echo "conda activation script not found and conda command missing" >&2
+    exit 1
+fi
 
 # Configure VNC password when enabled
 SECURITY_OPTS=""
 if [ "${DISABLE_PASSWORD}" = "1" ]; then
     echo "Starting VNC server without authentication"
-    rm -f /root/.vnc/passwd
+    rm -f "${VNC_DIR}/passwd"
     SECURITY_OPTS="-SecurityTypes None"
 else
-    if [ ! -f /root/.vnc/passwd ]; then
+    if [ ! -f "${VNC_DIR}/passwd" ]; then
         echo "Setting VNC password"
-        printf "%s\n%s\n\n" "${VNC_PASSWORD}" "${VNC_PASSWORD}" | vncpasswd -f > /root/.vnc/passwd
-        chmod 600 /root/.vnc/passwd
+        printf "%s\n%s\n\n" "${VNC_PASSWORD}" "${VNC_PASSWORD}" | vncpasswd -f >"${VNC_DIR}/passwd"
+        chmod 600 "${VNC_DIR}/passwd"
     fi
 fi
 
 # Ensure the X startup script exists
-cat <<'EOF' > /root/.vnc/xstartup
+cat <<'EOF' >"${VNC_DIR}/xstartup"
 #!/bin/sh
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
 exec startxfce4
 EOF
-chmod +x /root/.vnc/xstartup
+chmod +x "${VNC_DIR}/xstartup"
 
 cleanup() {
     if pgrep -x websockify >/dev/null 2>&1; then
@@ -49,7 +65,7 @@ cleanup() {
     if pgrep -f "jupyter-lab" >/dev/null 2>&1; then
         pkill -TERM -f "jupyter-lab" || true
     fi
-    if [ -f /root/.vnc/"$(hostname)${VNC_DISPLAY}".pid ]; then
+    if [ -f "${VNC_DIR}/$(hostname)${VNC_DISPLAY}.pid" ]; then
         vncserver -kill "${VNC_DISPLAY}" >/dev/null 2>&1 || true
     fi
 }
@@ -85,7 +101,7 @@ if [ "${JUPYTER_ENABLE}" = "1" ]; then
         --ServerApp.allow_root=True \
         --ServerApp.root_dir="${JUPYTER_ROOT}" \
         --ServerApp.open_browser=False \
-        >/var/log/jupyter.log 2>&1 &
+        >"${LOG_DIR}/jupyter.log" 2>&1 &
     CHILD_PIDS+=("$!")
     echo "JupyterLab available on http://localhost:${JUPYTER_PORT}"
 fi
