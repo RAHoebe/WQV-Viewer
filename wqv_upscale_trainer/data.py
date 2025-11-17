@@ -144,7 +144,7 @@ def synthetic_degradation(
     *,
     monochrome_style: bool = False,
     monochrome_levels: int = 16,
-    monochrome_noise: float = 0.02,
+    monochrome_noise: float = 0.01,
 ) -> Tuple[np.ndarray, np.ndarray]:
     if monochrome_style:
         hr_patch = _apply_monochrome_style(
@@ -184,7 +184,7 @@ class SyntheticDegradationDataset(Dataset):
         augment: bool = True,
         monochrome_style: bool = False,
         monochrome_levels: int = 16,
-        monochrome_noise: float = 0.02,
+        monochrome_noise: float = 0.01,
     ) -> None:
         self.paths = list(image_paths)
         self.scale = scale
