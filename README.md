@@ -10,6 +10,10 @@ WQV-Viewer is a PyQt6 desktop application and companion NeoSR trainer built for 
 - Export flow writes PNGs with embedded JSON metadata, drops readable sidecars, remembers destinations, and provides progress plus cancel controls for long AI runs.
 - `wqv-upscale-trainer` CLI creates synthetic WQV degradations, manages train/val/test splits, tracks EMA checkpoints, logs to TensorBoard, and emits deployable weights ready for the viewer.
 
+## Interface Preview
+
+![Main window with dual preview](resources/screenshots/viewer-overview.png "WQV-Viewer main window showing the thumbnail list, original preview, and upscaled preview")
+
 ## Requirements
 - Python 3.9 or newer with pip available on your PATH.
 - Desktop platform with Qt 6 support (Windows, macOS, or modern Linux).
@@ -39,6 +43,8 @@ python -m wqv_viewer
 - Drag and drop a `.pdb` file onto the window instead of using the dialog. Drops are validated before loading.
 - The **Open Recent** submenu tracks the last ten databases. Missing files are removed from the list automatically.
 - **File -> Clear** unloads the current session while leaving recent history intact. The last database, selection signature, pipeline settings, and window geometry are restored on the next launch via `QSettings`.
+
+<img src="resources/screenshots/wqv-wrist-camera-palm-recieve-all.png" alt="Palm WQV Link app ready to receive all images over infrared" width="320" />
 
 ### Navigating and previewing
 - Thumbnails support standard Ctrl/Shift multi-selection. Selecting an item refreshes the dual preview panes: the original capture on the left and the active pipeline result on the right.
