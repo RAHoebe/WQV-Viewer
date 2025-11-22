@@ -100,5 +100,7 @@ WQV-Viewer builds upon the research shared in the community project [WQV_PDB_Too
 ## Additional Resources
 - [Archived enthusiast write-up on WQV cameras (pages.zoom.co.uk/epayne)](https://web.archive.org/web/20041024174136/http://pages.zoom.co.uk/epayne/index.html)
 - [Archived Casio WQV download portal](https://web.archive.org/web/20080430210835/http://world.casio.com/wat/download/en/)
+- [Casio WQV Link software v1.1 for Palm OS](https://web.archive.org/web/20080430210835/http://world.casio.com/wat/download/en/)
+- [Casio WQV Color for Palm OS v2.2](https://web.archive.org/web/20080421035139/http://world.casio.com/wat/download/en/wqv/3/dl_palm_link.html)
 
 
