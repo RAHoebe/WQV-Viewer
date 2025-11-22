@@ -8,6 +8,7 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 import logging
+import math
 import struct
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -166,11 +167,31 @@ def load_wqv_color(path: Path | str) -> WQVImage:
 
 
 def load_wqv_pdb(path: Path | str, *, width: int = 120, height: int = 120) -> List[WQVImage]:
-    """Extract all monochrome captures stored inside a ``WQVLinkDB.PDB`` archive."""
+    """Extract captures stored inside a Palm OS backup archive."""
 
     path = Path(path)
     header, records = _read_palm_database(path)
+    fallback_timestamp = _derive_pdb_timestamp(path, header)
+    records = _strip_empty_palm_records(path, header, records)
 
+    database_name = _decode_pdb_name(header)
+    if database_name.startswith("WQVColorDB"):
+        return _load_wqv_color_database(path, records, fallback_timestamp)
+    return _load_wqv_monochrome_database(
+        path,
+        records,
+        fallback_timestamp,
+        width=width,
+        height=height,
+    )
+
+
+def _decode_pdb_name(header: bytes) -> str:
+    raw_name = header[:32]
+    return raw_name.split(b"\x00", 1)[0].decode("ascii", "ignore")
+
+
+def _derive_pdb_timestamp(path: Path, header: bytes) -> Optional[str]:
     creation_time = struct.unpack_from(">I", header, 32)[0]
     modification_time = struct.unpack_from(">I", header, 36)[0]
     backup_time = struct.unpack_from(">I", header, 40)[0]
@@ -187,22 +208,35 @@ def load_wqv_pdb(path: Path | str, *, width: int = 120, height: int = 120) -> Li
         None,
     )
 
+    if fallback_timestamp:
+        return fallback_timestamp
+
     try:
         stat_result = path.stat()
     except OSError:
-        stat_result = None
-    if fallback_timestamp is None and stat_result is not None:
-        fallback_timestamp = _format_file_timestamp(stat_result.st_ctime)
+        return None
+    return _format_file_timestamp(stat_result.st_ctime)
 
-    cleaned_records: List[PalmRecord] = [record for record in records if record.payload]
+
+def _strip_empty_palm_records(
+    path: Path, header: bytearray, records: List[PalmRecord]
+) -> List[PalmRecord]:
+    cleaned_records = [record for record in records if record.payload]
     removed = len(records) - len(cleaned_records)
     if removed:
         logger.info("Removing %s empty Palm database records from %s", removed, path)
         _write_palm_database(path, header, cleaned_records)
-        records = cleaned_records
-    else:
-        records = cleaned_records
+    return cleaned_records
 
+
+def _load_wqv_monochrome_database(
+    path: Path,
+    records: List[PalmRecord],
+    fallback_timestamp: Optional[str],
+    *,
+    width: int,
+    height: int,
+) -> List[WQVImage]:
     images: List[WQVImage] = []
     for new_index, record in enumerate(records):
         record_metadata = {
@@ -233,6 +267,119 @@ def load_wqv_pdb(path: Path | str, *, width: int = 120, height: int = 120) -> Li
             if not image.captured_at:
                 image.captured_at = fallback_timestamp
                 image.metadata.setdefault("captured_at", fallback_timestamp)
+    return images
+
+
+def _load_wqv_color_database(
+    path: Path,
+    records: List[PalmRecord],
+    fallback_timestamp: Optional[str],
+) -> List[WQVImage]:
+    if not records:
+        return []
+
+    first_payload = records[0].payload
+    if len(first_payload) < 60:
+        raise ValueError(f"Palm color chunk header in {path} is truncated")
+
+    width = struct.unpack_from(">H", first_payload, 2)[0]
+    height = struct.unpack_from(">H", first_payload, 4)[0]
+    rows_per_chunk = struct.unpack_from(">H", first_payload, 58)[0]
+    if width <= 0 or height <= 0 or rows_per_chunk <= 0:
+        raise ValueError(f"Palm color chunk dimensions are invalid in {path}")
+
+    chunk_span = width * rows_per_chunk
+    group_size = max(1, math.ceil(height / rows_per_chunk))
+
+    expected_payload = 60 + chunk_span
+    if len(first_payload) < expected_payload:
+        raise ValueError(f"Palm color chunk payload in {path} is smaller than expected")
+
+    images: List[WQVImage] = []
+    for start in range(0, len(records), group_size):
+        chunk = records[start : start + group_size]
+        if len(chunk) < group_size:
+            logger.warning(
+                "Ignoring %s trailing Palm database records in %s (expected %s per image)",
+                len(chunk),
+                path,
+                group_size,
+            )
+            break
+
+        slices: List[bytes] = []
+        chunk_indices: List[str] = []
+        chunk_ids: List[str] = []
+        chunk_timestamps: List[str] = []
+        title: Optional[str] = None
+
+        for record in chunk:
+            payload = record.payload
+            if len(payload) < 60:
+                raise ValueError(
+                    f"Palm color chunk header in record {record.index} of {path} is truncated"
+                )
+            chunk_body = payload[60:]
+            if len(chunk_body) < chunk_span:
+                raise ValueError(
+                    f"Palm color chunk payload in record {record.index} of {path} is truncated"
+                )
+            slices.append(bytes(chunk_body[:chunk_span]))
+            chunk_indices.append(str(record.index))
+            chunk_ids.append(str(record.unique_id))
+
+            name_bytes = payload[36:52]
+            candidate_title = name_bytes.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
+            if candidate_title and not title:
+                title = candidate_title
+
+            timestamp_raw = int.from_bytes(payload[32:36], "big")
+            formatted = _format_palm_timestamp(timestamp_raw)
+            if formatted:
+                chunk_timestamps.append(formatted)
+
+        raw = b"".join(slices)
+        required_bytes = width * height
+        if len(raw) < required_bytes:
+            logger.warning(
+                "Color chunk set %s in %s produced %s bytes (expected %s)",
+                start // group_size,
+                path,
+                len(raw),
+                required_bytes,
+            )
+            continue
+        raw = raw[:required_bytes]
+
+        pil_image = Image.frombytes("L", (width, height), raw)
+        captured_at = chunk_timestamps[-1] if chunk_timestamps else fallback_timestamp
+
+        metadata = {
+            "source_pdb": str(path),
+            "record_indices": ",".join(chunk_indices),
+            "record_unique_ids": ",".join(chunk_ids),
+            "chunk_rows": str(rows_per_chunk),
+            "chunk_stride": str(chunk_span),
+        }
+        if chunk_timestamps:
+            metadata["chunk_timestamps"] = ",".join(chunk_timestamps)
+
+        synthetic_name = f"{path.stem}_color{len(images):03d}.pdb"
+        synthetic_path = path.with_name(synthetic_name)
+        image = WQVImage(
+            path=synthetic_path,
+            image=pil_image,
+            kind=WQVImageKind.MONOCHROME,
+            title=title or None,
+            captured_at=captured_at,
+            metadata=metadata,
+        )
+        if captured_at:
+            image.metadata.setdefault("captured_at", captured_at)
+        elif fallback_timestamp:
+            image.metadata.setdefault("captured_at", fallback_timestamp)
+
+        images.append(image)
 
     return images
 

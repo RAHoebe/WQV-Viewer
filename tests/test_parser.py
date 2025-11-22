@@ -35,6 +35,13 @@ def sample_pdb(tmp_path) -> Path:
 
 
 @pytest.fixture()
+def sample_color_pdb(tmp_path) -> Path:
+    destination = tmp_path / "WQVColorDB.PDB"
+    shutil.copyfile(Path(__file__).parent / "data" / "WQVColorDB.PDB", destination)
+    return destination
+
+
+@pytest.fixture()
 def sample_pdb_with_empty_record(tmp_path) -> Path:
     source = Path(__file__).parent / "data" / "WQVLinkDB.PDB"
     header, records = _read_palm_database(source)
@@ -120,6 +127,19 @@ def test_load_wqv_pdb_skips_empty_records(sample_pdb_with_empty_record: Path) ->
     assert all(image.image.size == (120, 120) for image in images)
     header, records = _read_palm_database(sample_pdb_with_empty_record)
     assert len(records) == 13
+
+
+def test_load_wqv_color_pdb_tiles_records(sample_color_pdb: Path) -> None:
+    images = load_wqv_pdb(sample_color_pdb)
+    assert len(images) == 3
+    assert all(image.image.size == (176, 144) for image in images)
+    checksums = [hashlib.md5(image.image.tobytes()).hexdigest() for image in images]
+    assert checksums == [
+        "3d84b15225303e2cf76d12ebff3cc3f2",
+        "13f0e9cd08192efda228feee126474a9",
+        "3f6d34c29922b624ed4faec6a370bf43",
+    ]
+    assert all(image.metadata.get("chunk_rows") == "36" for image in images)
 
 
 def test_delete_wqv_pdb_records(sample_pdb: Path) -> None:

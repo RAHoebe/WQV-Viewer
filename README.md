@@ -30,6 +30,8 @@ WQV-Viewer is a PyQt6 desktop application and companion NeoSR trainer built for 
 
 > Offline installs: download the Real-ESRGAN weights you need and place them under `models/realesrgan` before launching the viewer. The viewer will skip network downloads when the files already exist.
 
+Prefer a containerized environment? Follow the noVNC-enabled workflow in [`readme_wqv_docker.me`](readme_wqv_docker.me).
+
 ## Launching the viewer
 
 Run the desktop application from the project root:
