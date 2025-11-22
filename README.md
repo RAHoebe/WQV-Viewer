@@ -103,4 +103,7 @@ WQV-Viewer builds upon the research shared in the community project [WQV_PDB_Too
 - [Casio WQV Link software v1.1 for Palm OS](https://web.archive.org/web/20080430210835/http://world.casio.com/wat/download/en/)
 - [Casio WQV Color for Palm OS v2.2](https://web.archive.org/web/20080421035139/http://world.casio.com/wat/download/en/wqv/3/dl_palm_link.html)
 
+## License
+- Distributed under the [Apache License 2.0](LICENSE).
+
 
