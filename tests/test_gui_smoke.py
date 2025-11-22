@@ -5,7 +5,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QMimeData, QSettings, QUrl
-from PyQt6.QtWidgets import QApplication, QFileDialog, QListView, QListWidget
+from PyQt6.QtWidgets import QApplication, QFileDialog, QListView, QListWidget, QInputDialog
 
 import pytest
 
@@ -30,8 +30,13 @@ def test_main_window_constructs(tmp_path) -> None:
             app.quit()
 
 
-def _copy_pdb_fixture(tmp_path: Path, *, name: str = "WQVLinkDB.PDB") -> Path:
-    source = Path(__file__).parent / "data" / "WQVLinkDB.PDB"
+def _copy_pdb_fixture(
+    tmp_path: Path,
+    *,
+    name: str = "WQVLinkDB.PDB",
+    source_name: str = "WQVLinkDB.PDB",
+) -> Path:
+    source = Path(__file__).parent / "data" / source_name
     destination = tmp_path / name
     shutil.copyfile(source, destination)
     return destination
@@ -113,6 +118,49 @@ def test_multi_selection_uses_first_item(tmp_path) -> None:
             app.quit()
 
 
+def test_delete_disabled_for_color_pdb(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(Path(tmp_path) / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings, enable_async_upscale=False)
+    try:
+        pdb_path = _copy_pdb_fixture(
+            Path(tmp_path),
+            name="WQVColorDB.PDB",
+            source_name="WQVColorDB.PDB",
+        )
+        window._load_pdb(pdb_path)
+        assert window.delete_action.isEnabled() is False
+        window.delete_selected()
+        message = window.status_bar.currentMessage()
+        assert message and "color" in message.lower()
+    finally:
+        window.deleteLater()
+        if QApplication.instance() is app:
+            app.quit()
+
+
+def test_color_pdb_missing_cas_emits_warning(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(Path(tmp_path) / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings, enable_async_upscale=False)
+    try:
+        pdb_path = _copy_pdb_fixture(
+            Path(tmp_path),
+            name="WQVColorDB.PDB",
+            source_name="WQVColorDB.PDB",
+        )
+        window._load_pdb(pdb_path)
+        assert window.diagnostics_action.isEnabled() is True
+        assert window._last_load_report is not None
+        assert window._last_load_report.warnings
+        status_message = window.status_bar.currentMessage()
+        assert status_message and "placeholder" in status_message.lower()
+    finally:
+        window.deleteLater()
+        if QApplication.instance() is app:
+            app.quit()
+
+
 def test_export_selected_directory(tmp_path, monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     settings = QSettings(str(Path(tmp_path) / "settings.ini"), QSettings.Format.IniFormat)
@@ -141,6 +189,34 @@ def test_export_selected_directory(tmp_path, monkeypatch) -> None:
         assert len(png_exports) == 2
         assert len(json_exports) == 2
         assert window._settings.value("session/lastExportDirectory") == str(export_dir)
+    finally:
+        window.deleteLater()
+        if QApplication.instance() is app:
+            app.quit()
+
+
+def test_pipeline_preset_roundtrip(tmp_path, monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(Path(tmp_path) / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings, enable_async_upscale=False)
+    try:
+        pdb_path = _copy_pdb_fixture(Path(tmp_path))
+        window._load_pdb(pdb_path)
+
+        window.browser.conventional_checkbox.setChecked(False)
+        window.browser.ai_checkbox.setChecked(True)
+
+        monkeypatch.setattr(QInputDialog, "getText", lambda *_, **__: ("PresetA", True))
+        window._save_pipeline_preset()
+        assert window._pipeline_presets and window._pipeline_presets[0]["name"] == "PresetA"
+
+        window.browser.conventional_checkbox.setChecked(True)
+        window.browser.ai_checkbox.setChecked(False)
+
+        monkeypatch.setattr(QInputDialog, "getItem", lambda *_, **__: ("PresetA", True))
+        window._load_pipeline_preset_dialog()
+        assert window.browser.conventional_checkbox.isChecked() is False
+        assert window.browser.ai_checkbox.isChecked() is True
     finally:
         window.deleteLater()
         if QApplication.instance() is app:
@@ -222,7 +298,11 @@ def test_recent_files_capped_at_ten(tmp_path) -> None:
     window = MainWindow(settings=settings, enable_async_upscale=False)
     try:
         for index in range(12):
-            pdb_path = _copy_pdb_fixture(Path(tmp_path), name=f"WQVLinkDB_{index}.PDB")
+            pdb_path = _copy_pdb_fixture(
+                Path(tmp_path),
+                name=f"WQVLinkDB_{index}.PDB",
+                source_name="WQVLinkDB.PDB",
+            )
             window._load_pdb(pdb_path)
         window._save_session_state()
     finally:

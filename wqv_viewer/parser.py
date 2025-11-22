@@ -90,6 +90,16 @@ class WQVImage:
 
 
 @dataclass
+class WQVLoadReport:
+    """Collects non-fatal warnings emitted while parsing Palm databases."""
+
+    warnings: List[str] = field(default_factory=list)
+
+    def warn(self, message: str) -> None:
+        self.warnings.append(message)
+
+
+@dataclass
 class PalmRecord:
     """Represents a single Palm database record."""
 
@@ -166,7 +176,13 @@ def load_wqv_color(path: Path | str) -> WQVImage:
     )
 
 
-def load_wqv_pdb(path: Path | str, *, width: int = 120, height: int = 120) -> List[WQVImage]:
+def load_wqv_pdb(
+    path: Path | str,
+    *,
+    width: int = 120,
+    height: int = 120,
+    report: Optional[WQVLoadReport] = None,
+) -> List[WQVImage]:
     """Extract captures stored inside a Palm OS backup archive."""
 
     path = Path(path)
@@ -181,6 +197,7 @@ def load_wqv_pdb(path: Path | str, *, width: int = 120, height: int = 120) -> Li
             records,
             fallback_timestamp,
             companion_dir=path.parent,
+            report=report,
         )
     if database_name.upper().startswith("CASIJPG"):
         return _load_wqv_color_jpeg_database(path, records, fallback_timestamp)
@@ -283,6 +300,7 @@ def _load_wqv_color_database(
     fallback_timestamp: Optional[str],
     *,
     companion_dir: Optional[Path] = None,
+    report: Optional[WQVLoadReport] = None,
 ) -> List[WQVImage]:
     if not records:
         return []
@@ -341,6 +359,11 @@ def _load_wqv_color_database(
         metadata["placeholder_reason"] = "missing_companion_casijpg"
         if record_name:
             metadata["expected_casijpg"] = f"{record_name}.PDB"
+        if report is not None:
+            missing_name = metadata.get("expected_casijpg") or "CAS file"
+            report.warn(
+                f"{path.name}: using placeholder for record {record.index} (missing {missing_name})"
+            )
         synthetic_name = f"{path.stem}_{record.unique_id:07d}_thumb.pdb"
         synthetic_path = path.with_name(synthetic_name)
         image = WQVImage(

@@ -48,6 +48,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QInputDialog,
     QFrame,
     QFormLayout,
     QGroupBox,
@@ -70,7 +71,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .exporter import export_result
-from .parser import WQVImage, delete_wqv_pdb_records, load_wqv_pdb
+from .parser import WQVImage, WQVLoadReport, delete_wqv_pdb_records, load_wqv_pdb
 from .pipeline import PipelineConfig, PipelineResult, PipelineStage, build_pipeline, run_pipeline
 from .upscaling import ALLOWED_CONVENTIONAL_SCALES, Upscaler, ai_upscalers, conventional_upscalers
 
@@ -878,6 +879,55 @@ class ImageBrowser(QWidget):
             return data
         return supported[0] if supported else None
 
+    def suggest_pipeline_preset_name(self, state: Mapping[str, Any]) -> str:
+        def _sanitize(label: str) -> str:
+            cleaned = "".join(ch for ch in label if ch.isalnum())
+            return cleaned or "Preset"
+
+        def _ai_segment() -> Optional[str]:
+            if not state.get("ai_enabled"):
+                return None
+            ai_id = state.get("ai_id")
+            ai_label = None
+            if isinstance(ai_id, str):
+                upscaler = self._ai_map.get(ai_id)
+                ai_label = upscaler.label if upscaler else ai_id
+            scale = state.get("ai_scale")
+            label = _sanitize(ai_label or "AI")
+            scale_text = f"{scale}x" if isinstance(scale, int) else "?x"
+            return f"AI_{label}_{scale_text}"
+
+        def _conv_segment() -> Optional[str]:
+            if not state.get("conventional_enabled"):
+                return None
+            conv_id = state.get("conventional_id")
+            conv_label = None
+            if isinstance(conv_id, str):
+                upscaler = self._conventional_map.get(conv_id)
+                conv_label = upscaler.label if upscaler else conv_id
+            scale = state.get("conventional_scale")
+            label = _sanitize(conv_label or "Conv")
+            scale_text = f"{scale}x" if isinstance(scale, int) else "?x"
+            return f"Conv_{label}_{scale_text}"
+
+        ai_segment = _ai_segment()
+        conv_segment = _conv_segment()
+        segments: List[str] = []
+        order = state.get("pipeline_order") or "ai-first"
+        if order == "ai-first":
+            if ai_segment:
+                segments.append(ai_segment)
+            if conv_segment:
+                segments.append(conv_segment)
+        else:
+            if conv_segment:
+                segments.append(conv_segment)
+            if ai_segment:
+                segments.append(ai_segment)
+        if not segments:
+            return "DefaultPipeline"
+        return "__".join(segments)
+
     def _pipeline_config(self) -> PipelineConfig:
         enable_conventional = self.conventional_checkbox.isChecked()
         enable_ai = self.ai_checkbox.isChecked() and bool(self._ai_upscalers)
@@ -1106,7 +1156,11 @@ class MainWindow(QMainWindow):
         self._recent_files: List[str] = []
         self._resource_icon_cache: Dict[str, QIcon] = {}
         self._zoom_icon_cache: Dict[str, QIcon] = {}
+        self._preset_icon_cache: Dict[str, QIcon] = {}
         self._action_icons: Dict[QAction, Callable[[], QIcon] | str] = {}
+        self._delete_disabled_reason: Optional[str] = None
+        self._last_load_report: Optional[WQVLoadReport] = None
+        self._pipeline_presets: List[Dict[str, Any]] = []
 
         self._apply_window_icon()
 
@@ -1130,9 +1184,62 @@ class MainWindow(QMainWindow):
 
         self._recent_files = self._load_recent_files()
         self._update_recent_menu()
+        self._pipeline_presets = self._load_pipeline_presets()
         self._restore_session()
 
         self._connect_pipeline_signals()
+
+    def _make_preset_icon(self, kind: str) -> QIcon:
+        palette = self.palette()
+        color = palette.color(QPalette.ColorRole.ButtonText)
+        key = f"preset:{kind}:{color.rgba()}"
+        cached = self._preset_icon_cache.get(key)
+        if cached is not None:
+            return cached
+
+        size = 18
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(color)
+        pen.setWidth(2)
+        painter.setPen(pen)
+
+        rect = QRectF(2, 3, size - 4, size - 6)
+        painter.drawRoundedRect(rect, 3, 3)
+
+        mid_x = rect.center().x()
+        arrow_top = rect.top() + 3
+        arrow_bottom = rect.bottom() - 3
+        arrow_width = 4
+
+        if kind == "save":
+            painter.drawLine(QPointF(mid_x, arrow_top), QPointF(mid_x, arrow_bottom))
+            painter.drawLine(
+                QPointF(mid_x, arrow_bottom),
+                QPointF(mid_x - arrow_width, arrow_bottom - arrow_width),
+            )
+            painter.drawLine(
+                QPointF(mid_x, arrow_bottom),
+                QPointF(mid_x + arrow_width, arrow_bottom - arrow_width),
+            )
+        else:  # load
+            painter.drawLine(QPointF(mid_x, arrow_bottom), QPointF(mid_x, arrow_top))
+            painter.drawLine(
+                QPointF(mid_x, arrow_top),
+                QPointF(mid_x - arrow_width, arrow_top + arrow_width),
+            )
+            painter.drawLine(
+                QPointF(mid_x, arrow_top),
+                QPointF(mid_x + arrow_width, arrow_top + arrow_width),
+            )
+
+        painter.end()
+        icon = QIcon(pixmap)
+        self._preset_icon_cache[key] = icon
+        return icon
 
     # ---------------------------------------------------------------- actions
     def _resources_dir(self) -> Path:
@@ -1233,6 +1340,18 @@ class MainWindow(QMainWindow):
         self.about_action = QAction("About WQV Viewer", self)
         self.about_action.triggered.connect(self._show_about_dialog)
 
+        self.diagnostics_action = QAction("View Load Diagnostics…", self)
+        self.diagnostics_action.triggered.connect(self._show_diagnostics_dialog)
+        self.diagnostics_action.setEnabled(False)
+
+        self.save_pipeline_preset_action = QAction("Save Pipeline Preset…", self)
+        self.save_pipeline_preset_action.triggered.connect(self._save_pipeline_preset)
+        self._register_icon(self.save_pipeline_preset_action, lambda: self._make_preset_icon("save"))
+
+        self.load_pipeline_preset_action = QAction("Load Pipeline Preset…", self)
+        self.load_pipeline_preset_action.triggered.connect(self._load_pipeline_preset_dialog)
+        self._register_icon(self.load_pipeline_preset_action, lambda: self._make_preset_icon("load"))
+
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(self.open_pdb_action)
@@ -1253,14 +1372,21 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.zoom_out_action)
         view_menu.addAction(self.zoom_reset_action)
 
+        pipeline_menu = self.menuBar().addMenu("Pipeline")
+        pipeline_menu.addAction(self.save_pipeline_preset_action)
+        pipeline_menu.addAction(self.load_pipeline_preset_action)
+
         help_menu = self.menuBar().addMenu("Help")
         help_menu.addAction(self.about_action)
+        help_menu.addAction(self.diagnostics_action)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main")
         toolbar.addAction(self.open_pdb_action)
         toolbar.addAction(self.export_action)
         toolbar.addAction(self.delete_action)
+        toolbar.addAction(self.save_pipeline_preset_action)
+        toolbar.addAction(self.load_pipeline_preset_action)
         toolbar.addSeparator()
         toolbar.addAction(self.clear_action)
         toolbar.addSeparator()
@@ -1573,14 +1699,61 @@ class MainWindow(QMainWindow):
         used_names.add(candidate.with_suffix(".json").name.lower())
         return candidate
 
+    def _set_delete_action_enabled(self, enabled: bool, *, reason: Optional[str] = None) -> None:
+        self.delete_action.setEnabled(enabled)
+        self._delete_disabled_reason = None if enabled else reason
+
+    def _update_diagnostics_state(self, report: Optional[WQVLoadReport]) -> None:
+        self._last_load_report = report
+        warnings = report.warnings if report else []
+        self.diagnostics_action.setEnabled(bool(warnings))
+        if warnings:
+            summary = warnings[0]
+            if len(warnings) > 1:
+                summary = f"{summary} (+{len(warnings) - 1} more warnings)"
+            self.status_bar.showMessage(summary, 8000)
+
+    def _show_diagnostics_dialog(self) -> None:
+        report = self._last_load_report
+        warnings = report.warnings if report else []
+        if not warnings:
+            QMessageBox.information(self, "Load diagnostics", "No warnings for the last load.")
+            return
+        text = "\n".join(warnings)
+        QMessageBox.information(
+            self,
+            "Load diagnostics",
+            text,
+        )
+
+    def _is_color_database(self, images: Sequence[WQVImage]) -> bool:
+        for image in images:
+            metadata = getattr(image, "metadata", {})
+            if isinstance(metadata, dict) and metadata.get("source_color_db"):
+                return True
+        return False
+
+    def _refresh_delete_action(self, images: Sequence[WQVImage]) -> None:
+        if not images:
+            self._set_delete_action_enabled(False)
+            return
+        if self._is_color_database(images):
+            reason = "Deletion disabled for color databases; remove CAS archives manually."
+            self._set_delete_action_enabled(False, reason=reason)
+            self.status_bar.showMessage(reason, 6000)
+        else:
+            self._set_delete_action_enabled(True)
+
     # ------------------------------------------------------------ test hooks
     def _load_pdb(self, path: Path) -> int:
         resolved = path.resolve()
-        images = load_wqv_pdb(resolved)
+        report = WQVLoadReport()
+        images = load_wqv_pdb(resolved, report=report)
         self.browser.load_images(images)
         self._current_pdb_path = resolved
         self._last_loaded_pdb_path = resolved
-        self.delete_action.setEnabled(bool(images))
+        self._refresh_delete_action(images)
+        self._update_diagnostics_state(report)
         self._record_last_database(resolved)
         self._add_to_recent_list(resolved)
         self._apply_pending_selection()
@@ -1590,7 +1763,8 @@ class MainWindow(QMainWindow):
     def clear_browser(self) -> None:
         self.browser.clear()
         self._current_pdb_path = None
-        self.delete_action.setEnabled(False)
+        self._set_delete_action_enabled(False)
+        self._update_diagnostics_state(None)
         self._record_selection_signature()
 
     def _export_upscaled_image(self, path: Path) -> bool:
@@ -1640,6 +1814,80 @@ class MainWindow(QMainWindow):
         self._settings.setValue("session/recentFiles", json.dumps(self._recent_files[:10]))
         if commit:
             self._settings.sync()
+
+    def _load_pipeline_presets(self) -> List[Dict[str, Any]]:
+        data = self._load_json_setting("session/pipelinePresets")
+        if not isinstance(data, list):
+            return []
+        presets: List[Dict[str, Any]] = []
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            state = entry.get("state")
+            if isinstance(name, str) and isinstance(state, dict):
+                presets.append({"name": name, "state": state})
+        return presets[:15]
+
+    def _persist_pipeline_presets(self) -> None:
+        self._settings.setValue("session/pipelinePresets", json.dumps(self._pipeline_presets))
+        self._settings.sync()
+
+    def _save_pipeline_preset(self) -> None:
+        state = self.browser.save_state()
+        suggestion = self.browser.suggest_pipeline_preset_name(state)
+        name, accepted = QInputDialog.getText(
+            self,
+            "Save pipeline preset",
+            "Preset name:",
+            text=suggestion,
+        )
+        if not accepted:
+            return
+        preset_name = name.strip()
+        if not preset_name:
+            QMessageBox.warning(self, "Save pipeline preset", "Preset name cannot be empty.")
+            return
+
+        existing = next((entry for entry in self._pipeline_presets if entry["name"].lower() == preset_name.lower()), None)
+        if existing:
+            response = QMessageBox.question(
+                self,
+                "Overwrite preset",
+                f"Preset '{preset_name}' already exists. Overwrite?",
+            )
+            if response != QMessageBox.StandardButton.Yes:
+                return
+            existing["state"] = state
+        else:
+            self._pipeline_presets.insert(0, {"name": preset_name, "state": state})
+            if len(self._pipeline_presets) > 15:
+                self._pipeline_presets = self._pipeline_presets[:15]
+        self._persist_pipeline_presets()
+        self.status_bar.showMessage(f"Saved preset '{preset_name}'", 4000)
+
+    def _load_pipeline_preset_dialog(self) -> None:
+        if not self._pipeline_presets:
+            QMessageBox.information(self, "Load pipeline preset", "No presets available yet.")
+            return
+        names = [entry["name"] for entry in self._pipeline_presets]
+        selection, accepted = QInputDialog.getItem(
+            self,
+            "Load pipeline preset",
+            "Choose preset:",
+            names,
+            0,
+            False,
+        )
+        if not accepted:
+            return
+        preset_name = selection
+        target = next((entry for entry in self._pipeline_presets if entry["name"] == preset_name), None)
+        if target is None:
+            QMessageBox.warning(self, "Load pipeline preset", "Selected preset no longer exists.")
+            return
+        self.browser.restore_state(target["state"])
+        self.status_bar.showMessage(f"Loaded preset '{preset_name}'", 4000)
 
     def _update_recent_menu(self) -> None:
         if not hasattr(self, "recent_menu"):
@@ -1824,6 +2072,11 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("No Palm database loaded", 4000)
             return
 
+        if not self.delete_action.isEnabled():
+            reason = self._delete_disabled_reason or "Deletion is currently disabled"
+            self.status_bar.showMessage(reason, 5000)
+            return
+
         selected = self.browser.selected_images()
         if not selected:
             self.status_bar.showMessage("Select one or more images to delete", 4000)
@@ -1882,9 +2135,11 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("No records were deleted", 4000)
             return
 
-        images = load_wqv_pdb(pdb_path)
+        report = WQVLoadReport()
+        images = load_wqv_pdb(pdb_path, report=report)
         self.browser.load_images(images)
-        self.delete_action.setEnabled(bool(images))
+        self._refresh_delete_action(images)
+        self._update_diagnostics_state(report)
         self.status_bar.showMessage(f"Deleted {removed} record{'s' if removed != 1 else ''}", 5000)
 
 

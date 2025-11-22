@@ -7,6 +7,7 @@ import pytest
 from wqv_viewer.parser import (
     PalmRecord,
     WQVImageKind,
+    WQVLoadReport,
     delete_wqv_pdb_records,
     load_wqv_image,
     load_wqv_monochrome,
@@ -161,11 +162,15 @@ def test_load_wqv_color_pdb_without_companions(tmp_path: Path) -> None:
     destination = tmp_path / "WQVColorDB.PDB"
     shutil.copyfile(data_dir / "WQVColorDB.PDB", destination)
 
-    images = load_wqv_pdb(destination)
-    assert len(images) == 13
+    report = WQVLoadReport()
+    images = load_wqv_pdb(destination, report=report)
+    _, records = _read_palm_database(destination)
+    assert len(images) == len(records)
     assert all(image.kind == WQVImageKind.MONOCHROME for image in images)
     assert all(image.image.size == (176, 144) for image in images)
     assert all(image.metadata.get("placeholder_reason") == "missing_companion_casijpg" for image in images)
+    assert len(report.warnings) == len(images)
+    assert any("placeholder" in warning for warning in report.warnings)
 
 
 def test_load_casijpg_color_pdb(sample_color_jpeg_pdb: Path) -> None:

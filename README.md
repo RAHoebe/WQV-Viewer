@@ -3,22 +3,26 @@
 WQV-Viewer is a PyQt6 desktop application and companion NeoSR trainer built for the Casio WQV wrist cameras. It decodes Palm backups, previews captures, upscales them with configurable pipelines, and ships a training toolchain for producing new Real-ESRGAN style weights tuned to wristcam footage.
 
 ## Highlights
-- Pure-Python parser loads WQVLink Palm databases, raw monochrome dumps, and colour JPEG exports while preserving capture metadata.
-- Responsive dual-pane GUI with thumbnail grid, metadata panel, multi-selection export, and asynchronous upscaling workers that keep the interface responsive.
-- Configurable pipeline that mixes conventional resamplers with Real-ESRGAN variants, includes GPU/CPU device policies with automatic fallback, and lets you flip the processing order.
-- Bundled Real-ESRGAN weights plus repository-supplied custom checkpoints (`models/custom/wqv_neosr_x4.pth` and `models/custom/wqv_neosr_x8.pth`) that appear alongside the stock models in the UI.
-- Export flow writes PNGs with embedded JSON metadata, drops readable sidecars, remembers destinations, and provides progress plus cancel controls for long AI runs.
-- `wqv-upscale-trainer` CLI creates synthetic WQV degradations, manages train/val/test splits, tracks EMA checkpoints, logs to TensorBoard, and emits deployable weights ready for the viewer.
+- **Palm-first parser**: loads WQVLink/WQVColor databases, raw monochrome dumps, individual `CASIJPG*.PDB` files, and exported JPEGs while preserving capture metadata.
+- **Color awareness**: when `WQVColorDB.PDB` is opened next to its companion `CASIJPG*.PDB` files the viewer stitches in the original colour JPEGs; missing companions trigger readable placeholder thumbnails plus diagnostics so you know what is absent.
+- **Dual-pane GUI**: thumbnail grid, metadata pane, original/upscaled previews, zoom shortcuts, and asynchronous workers keep the UI responsive during heavy AI jobs.
+- **Configurable pipelines**: combine Pillow resamplers with Real-ESRGAN/NeoSR checkpoints, choose execution order, device policy (auto GPU fallback), and save/load named pipeline presets directly from the toolbar.
+- **Load diagnostics**: the parser collects warnings (missing CAS files, truncated chunks, etc.) and exposes them through **Help → View Load Diagnostics…** so issues are never silent.
+- **Exports with provenance**: batch export runs the active pipeline, writes PNGs plus JSON sidecars, deduplicates filenames, and reports progress with cancel controls.
+- **Trainer toolchain**: `wqv-upscale-trainer` fabricates WQV-style degradations, manages splits, trains RRDB/NeoSR models, logs to TensorBoard, and emits deployable checkpoints ready for the viewer.
 
 ## Interface Preview
 
 ![Main window with dual preview](resources/screenshots/viewer-overview.png "WQV-Viewer main window showing the thumbnail list, original preview, and upscaled preview")
+
+![Color capture loaded from CASIJPG companion](resources/screenshots/WQV3-WQV10%20Color%20Viewer.png "WQVColor session paired with CASIJPG records")
 
 ## Requirements
 - Python 3.9 or newer with pip available on your PATH.
 - Desktop platform with Qt 6 support (Windows, macOS, or modern Linux).
 - NVIDIA CUDA GPU recommended for Real-ESRGAN acceleration, but CPU mode is available.
 - Sufficient disk space for model weights (`models/realesrgan` and `models/custom`).
+- For WQV-3/WQV-10 colour sessions, place the matching `CASIJPG*.PDB` files next to `WQVColorDB.PDB`. The viewer can also open a `CASIJPG` archive directly if you only need a single JPEG.
 
 ## Installation
 1. Clone the repository and open a shell inside `WQV-Viewer`.
@@ -32,7 +36,7 @@ WQV-Viewer is a PyQt6 desktop application and companion NeoSR trainer built for 
 
 Prefer a containerized environment? Follow the noVNC-enabled workflow in [`readme_wqv_docker.me`](readme_wqv_docker.me).
 
-## Launching the viewer
+## Quick Start
 
 Run the desktop application from the project root:
 
@@ -40,41 +44,18 @@ Run the desktop application from the project root:
 python -m wqv_viewer
 ```
 
-### Loading wristcam archives
-- Use **File -> Open WQVLinkDB...** to browse for Palm backups (`.pdb`). The viewer extracts every record into the thumbnail grid and updates the metadata pane with filename, capture time (when available), resolution, and Palm record identifiers.
-- Drag and drop a `.pdb` file onto the window instead of using the dialog. Drops are validated before loading.
-- The **Open Recent** submenu tracks the last ten databases. Missing files are removed from the list automatically.
-- **File -> Clear** unloads the current session while leaving recent history intact. The last database, selection signature, pipeline settings, and window geometry are restored on the next launch via `QSettings`.
+1. **Open a Palm database** (`File → Open WQVLinkDB…` or drag & drop). Keep `CASIJPG*.PDB` files next to `WQVColorDB.PDB` so colour thumbnails light up.
+2. **Navigate the thumbnails**: multi-select, inspect metadata, and rely on zoom shortcuts to inspect originals/upscaled previews.
+3. **Configure the pipeline** using the conventional + AI panels, then save the combo as a preset using the toolbar icons for quick recall.
+4. **Monitor diagnostics** in the status bar—warnings enable the **View Load Diagnostics…** action so you can review missing CAS companions or other anomalies.
+5. **Export** with `File → Export Selected…` to generate PNG/JSON pairs or delete Palm records (monochrome archives only) using the context menu.
 
-<img src="resources/screenshots/wqv-wrist-camera-palm-recieve-all.png" alt="Palm WQV Link app ready to receive all images over infrared" width="320" />
+That’s the day-to-day workflow; everything else lives in `MANUAL_VIEWER.md`.
 
-### Navigating and previewing
-- Thumbnails support standard Ctrl/Shift multi-selection. Selecting an item refreshes the dual preview panes: the original capture on the left and the active pipeline result on the right.
-- The metadata group stays in sync with the selection so you can inspect record numbers before deleting or exporting.
-- Fit/Actual zoom modes are exposed as toggle actions and tool buttons; `Ctrl` + mouse wheel, standard Zoom In/Out shortcuts, and `Ctrl+0` are all supported. Zoom mode applies to both panes simultaneously.
-- The thumbnail list exposes the registered context actions, including **Delete Selected**, so you can manage records without leaving the viewer.
+## Detailed Manuals
 
-### Upscaling pipeline controls
-- The **Conventional** row lets you choose a Pillow resampler (nearest, bilinear, bicubic, Lanczos) and one of the allowed scale factors (2x through 6x).
-- The **AI** row activates Real-ESRGAN models. Pick a variant, select the scales it supports (2x, 4x, or 8x depending on the weights), and choose whether the AI stage runs before or after the conventional stage via the **Order** combo box.
-- The **Device** selector honours Auto (GPU with CPU fallback), GPU only, or CPU only. If a GPU attempt fails, the pipeline retries on CPU and shows the fallback in the status summary.
-- Every upscale runs in a background worker thread. The status bar hosts a progress widget with a **Cancel** button so you can interrupt long jobs without freezing the UI.
-- The primary status label reports the active pipeline summary, including the models used, scale multipliers, and whether a fallback policy was triggered.
-
-### Exporting images
-- Highlight one or more thumbnails and pick **File -> Export Selected...**. The viewer runs the current pipeline for each selection, writes PNG files, and stores a matching `.json` sidecar containing the full metadata payload.
-- When filenames collide, an incrementing numeric suffix is applied to both the PNG and JSON to avoid overwriting prior exports.
-- The last export directory is remembered per session. Success, partial failure, and error cases are surfaced through the status bar.
-
-### Managing Palm databases
-- **Delete Selected** removes records directly from the backing `WQVLinkDB.PDB`. Selections spanning multiple databases are rejected to prevent accidental cross edits.
-- Before deleting, the viewer confirms how many records will be purged and cross-checks metadata to ensure a valid Palm record mapping exists.
-- After deletion the database is reloaded in-place so you can verify the updated contents immediately.
-
-### Session persistence and quality-of-life
-- Window geometry, splitter positions, zoom mode, pipeline configuration, last loaded database, and last selection are all saved in your user profile (`QSettings`).
-- Application icons ship under `resources/` for both Windows and cross-platform use. The window icon refreshes automatically if the palette changes.
-- Logs follow the standard Python logging configuration and are written alongside your session profile, making it easy to inspect pipeline failures.
+- [Viewer Manual](MANUAL_VIEWER.md): exhaustive coverage of loading, navigation, diagnostics, presets, exporting, and database hygiene.
+- [Trainer Manual](MANUAL_TRAINER.md): dataset prep, CLI options, monitoring, and deployment of new checkpoints.
 
 ## Upscaling models
 
@@ -96,36 +77,6 @@ python -m wqv_viewer
 - Restart the viewer to pick up new weights. Each file is listed under a `Custom:` label based on its stem so you can tell variants apart.
 - Stale copies in `models/realesrgan` are cleaned up automatically when their custom counterpart disappears, keeping the directory tidy.
 
-## Trainer CLI
-
-### What the trainer does
-- Scans a source directory for PNG/JPEG/TIFF assets and creates reproducible synthetic low-res/high-res pairs that mimic WQV compression and noise.
-- Splits the dataset into train/validation/test partitions with deterministic shuffling and exposes per-split dataloaders.
-- Supports optional monochrome simulation (`--monochrome-style`, `--monochrome-levels`, `--monochrome-noise`) to better match wristcam tonal ranges.
-- Trains RRDB/NeoSR generators with automatic mixed precision, gradient accumulation, EMA tracking, and Adam hyper-parameters that you can override.
-- Writes checkpoints at configurable intervals, including deployable `*_deploy.pth` snapshots and TensorBoard summaries (scalars plus LR/SR/HR comparison grids).
-
-### Run a training session
-
-```bash
-wqv-upscale-trainer data/highres workspace/run-x4 --scale 4 --steps 150000 \
-  --batch-size 8 --grad-accum-steps 2 --tensorboard --monochrome-style \
-  --perceptual-weight 0.05 --device auto
-```
-
-- `data/highres` contains your lossless source material; the trainer augments and crops it automatically.
-- `workspace/run-x4` is created on demand and stores configs, logs, checkpoints, and final models.
-- Adjust `--scale` to 2, 4, or 8; the generator architecture adapts automatically.
-- Resume training any time with `--resume path/to/checkpoint.pth`.
-- Disable AMP with `--no-amp` when running strictly on CPU hardware.
-
-### Outputs and deployment
-- `workspace/run-x4/trainer.log` captures console logs for later review.
-- `workspace/run-x4/dataset_splits.json` records the exact mapping between files and splits.
-- `workspace/run-x4/checkpoints/` stores periodic checkpoints alongside `*_deploy.pth` exports that already contain the slim `{"params": ...}` payload.
-- The best EMA snapshot is saved to `workspace/run-x4/models/wqv_neosr_x4.pth`; copy it into `models/custom` so the viewer can pick it up on the next launch.
-- The repository’s own `wqv_neosr_x4.pth` and `wqv_neosr_x8.pth` under `models/custom` were produced with this workflow and serve as reference baselines.
-
 ## Testing
 
 Run the automated tests from the project root:
@@ -145,5 +96,9 @@ The suite covers the parser, pipeline helpers, and a headless Qt smoke test (`QT
 ## Credits
 
 WQV-Viewer builds upon the research shared in the community project [WQV_PDB_Tools](https://github.com/nnnn2cat/WQV_PDB_Tools) and the outstanding Real-ESRGAN ecosystem maintained at [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN). All trademarks belong to their respective owners; please review upstream licenses when redistributing model weights.
+
+## Additional Resources
+- [Archived enthusiast write-up on WQV cameras (pages.zoom.co.uk/epayne)](https://web.archive.org/web/20041024174136/http://pages.zoom.co.uk/epayne/index.html)
+- [Archived Casio WQV download portal](https://web.archive.org/web/20080430210835/http://world.casio.com/wat/download/en/)
 
 
