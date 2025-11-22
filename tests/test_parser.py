@@ -36,8 +36,18 @@ def sample_pdb(tmp_path) -> Path:
 
 @pytest.fixture()
 def sample_color_pdb(tmp_path) -> Path:
+    data_dir = Path(__file__).parent / "data"
     destination = tmp_path / "WQVColorDB.PDB"
-    shutil.copyfile(Path(__file__).parent / "data" / "WQVColorDB.PDB", destination)
+    shutil.copyfile(data_dir / "WQVColorDB.PDB", destination)
+    for companion in data_dir.glob("CASIJPG*.PDB"):
+        shutil.copyfile(companion, tmp_path / companion.name)
+    return destination
+
+
+@pytest.fixture(params=sorted(Path(__file__).parent.glob("data/CASIJPG*.PDB")))
+def sample_color_jpeg_pdb(request, tmp_path) -> Path:
+    destination = tmp_path / request.param.name
+    shutil.copyfile(request.param, destination)
     return destination
 
 
@@ -130,16 +140,41 @@ def test_load_wqv_pdb_skips_empty_records(sample_pdb_with_empty_record: Path) ->
 
 
 def test_load_wqv_color_pdb_tiles_records(sample_color_pdb: Path) -> None:
+    cas_digest_by_name = {}
+    for cas_file in sample_color_pdb.parent.glob("CASIJPG*.PDB"):
+        cas_image = load_wqv_pdb(cas_file)[0]
+        title = cas_file.stem
+        cas_digest_by_name[title] = hashlib.md5(cas_image.image.tobytes()).hexdigest()
+
     images = load_wqv_pdb(sample_color_pdb)
-    assert len(images) == 3
+    assert len(images) == len(cas_digest_by_name)
+    for image in images:
+        assert image.kind == WQVImageKind.COLOR_JPEG
+        title = image.title or image.metadata.get("casijpg_name")
+        assert title in cas_digest_by_name
+        assert hashlib.md5(image.image.tobytes()).hexdigest() == cas_digest_by_name[title]
+        assert image.metadata.get("source_color_db") == str(sample_color_pdb)
+
+
+def test_load_wqv_color_pdb_without_companions(tmp_path: Path) -> None:
+    data_dir = Path(__file__).parent / "data"
+    destination = tmp_path / "WQVColorDB.PDB"
+    shutil.copyfile(data_dir / "WQVColorDB.PDB", destination)
+
+    images = load_wqv_pdb(destination)
+    assert len(images) == 13
+    assert all(image.kind == WQVImageKind.MONOCHROME for image in images)
     assert all(image.image.size == (176, 144) for image in images)
-    checksums = [hashlib.md5(image.image.tobytes()).hexdigest() for image in images]
-    assert checksums == [
-        "3d84b15225303e2cf76d12ebff3cc3f2",
-        "13f0e9cd08192efda228feee126474a9",
-        "3f6d34c29922b624ed4faec6a370bf43",
-    ]
-    assert all(image.metadata.get("chunk_rows") == "36" for image in images)
+    assert all(image.metadata.get("placeholder_reason") == "missing_companion_casijpg" for image in images)
+
+
+def test_load_casijpg_color_pdb(sample_color_jpeg_pdb: Path) -> None:
+    images = load_wqv_pdb(sample_color_jpeg_pdb)
+    assert len(images) == 1
+    image = images[0]
+    assert image.kind == WQVImageKind.COLOR_JPEG
+    assert image.image.size == (176, 144)
+    assert image.metadata.get("source_pdb") == str(sample_color_jpeg_pdb)
 
 
 def test_delete_wqv_pdb_records(sample_pdb: Path) -> None:

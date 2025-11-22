@@ -12,7 +12,7 @@ import math
 import struct
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 
 logger = logging.getLogger(__name__)
@@ -176,7 +176,14 @@ def load_wqv_pdb(path: Path | str, *, width: int = 120, height: int = 120) -> Li
 
     database_name = _decode_pdb_name(header)
     if database_name.startswith("WQVColorDB"):
-        return _load_wqv_color_database(path, records, fallback_timestamp)
+        return _load_wqv_color_database(
+            path,
+            records,
+            fallback_timestamp,
+            companion_dir=path.parent,
+        )
+    if database_name.upper().startswith("CASIJPG"):
+        return _load_wqv_color_jpeg_database(path, records, fallback_timestamp)
     return _load_wqv_monochrome_database(
         path,
         records,
@@ -274,114 +281,165 @@ def _load_wqv_color_database(
     path: Path,
     records: List[PalmRecord],
     fallback_timestamp: Optional[str],
+    *,
+    companion_dir: Optional[Path] = None,
 ) -> List[WQVImage]:
     if not records:
         return []
 
-    first_payload = records[0].payload
-    if len(first_payload) < 60:
-        raise ValueError(f"Palm color chunk header in {path} is truncated")
-
-    width = struct.unpack_from(">H", first_payload, 2)[0]
-    height = struct.unpack_from(">H", first_payload, 4)[0]
-    rows_per_chunk = struct.unpack_from(">H", first_payload, 58)[0]
-    if width <= 0 or height <= 0 or rows_per_chunk <= 0:
-        raise ValueError(f"Palm color chunk dimensions are invalid in {path}")
-
-    chunk_span = width * rows_per_chunk
-    group_size = max(1, math.ceil(height / rows_per_chunk))
-
-    expected_payload = 60 + chunk_span
-    if len(first_payload) < expected_payload:
-        raise ValueError(f"Palm color chunk payload in {path} is smaller than expected")
-
     images: List[WQVImage] = []
-    for start in range(0, len(records), group_size):
-        chunk = records[start : start + group_size]
-        if len(chunk) < group_size:
-            logger.warning(
-                "Ignoring %s trailing Palm database records in %s (expected %s per image)",
-                len(chunk),
-                path,
-                group_size,
+    for record in records:
+        payload = record.payload
+        if len(payload) < 60:
+            raise ValueError(
+                f"Palm color chunk header in record {record.index} of {path} is truncated"
             )
-            break
 
-        slices: List[bytes] = []
-        chunk_indices: List[str] = []
-        chunk_ids: List[str] = []
-        chunk_timestamps: List[str] = []
-        title: Optional[str] = None
-
-        for record in chunk:
-            payload = record.payload
-            if len(payload) < 60:
-                raise ValueError(
-                    f"Palm color chunk header in record {record.index} of {path} is truncated"
-                )
-            chunk_body = payload[60:]
-            if len(chunk_body) < chunk_span:
-                raise ValueError(
-                    f"Palm color chunk payload in record {record.index} of {path} is truncated"
-                )
-            slices.append(bytes(chunk_body[:chunk_span]))
-            chunk_indices.append(str(record.index))
-            chunk_ids.append(str(record.unique_id))
-
-            name_bytes = payload[36:52]
-            candidate_title = name_bytes.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
-            if candidate_title and not title:
-                title = candidate_title
-
-            timestamp_raw = int.from_bytes(payload[32:36], "big")
-            formatted = _format_palm_timestamp(timestamp_raw)
-            if formatted:
-                chunk_timestamps.append(formatted)
-
-        raw = b"".join(slices)
-        required_bytes = width * height
-        if len(raw) < required_bytes:
-            logger.warning(
-                "Color chunk set %s in %s produced %s bytes (expected %s)",
-                start // group_size,
-                path,
-                len(raw),
-                required_bytes,
-            )
-            continue
-        raw = raw[:required_bytes]
-
-        pil_image = Image.frombytes("L", (width, height), raw)
-        captured_at = chunk_timestamps[-1] if chunk_timestamps else fallback_timestamp
+        width = struct.unpack_from(">H", payload, 2)[0]
+        height = struct.unpack_from(">H", payload, 4)[0]
+        rows_per_tile = struct.unpack_from(">H", payload, 58)[0]
+        name_bytes = payload[36:52]
+        record_name = name_bytes.split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
+        timestamp_raw = int.from_bytes(payload[32:36], "big")
+        captured_at = _format_palm_timestamp(timestamp_raw) or fallback_timestamp
 
         metadata = {
-            "source_pdb": str(path),
-            "record_indices": ",".join(chunk_indices),
-            "record_unique_ids": ",".join(chunk_ids),
-            "chunk_rows": str(rows_per_chunk),
-            "chunk_stride": str(chunk_span),
+            "source_color_db": str(path),
+            "record_index": str(record.index),
+            "record_attr": str(record.attr),
+            "record_unique_id": str(record.unique_id),
         }
-        if chunk_timestamps:
-            metadata["chunk_timestamps"] = ",".join(chunk_timestamps)
+        if captured_at:
+            metadata["captured_at"] = captured_at
+        if record_name:
+            metadata["casijpg_name"] = record_name
 
-        synthetic_name = f"{path.stem}_color{len(images):03d}.pdb"
+        casijpg_image: Optional[WQVImage] = None
+        if companion_dir and record_name:
+            candidate = companion_dir / f"{record_name}.PDB"
+            if candidate.exists():
+                try:
+                    _, cas_records = _read_palm_database(candidate)
+                    cas_images = _load_wqv_color_jpeg_database(candidate, cas_records, captured_at)
+                except Exception as exc:  # pragma: no cover - corrupted companion
+                    logger.warning("Failed to decode companion %s: %s", candidate, exc)
+                else:
+                    if cas_images:
+                        casijpg_image = cas_images[0]
+
+        if casijpg_image is not None:
+            casijpg_image.metadata.update(metadata)
+            if record_name and not casijpg_image.title:
+                casijpg_image.title = record_name
+            images.append(casijpg_image)
+            continue
+
+        if width <= 0 or height <= 0 or rows_per_tile <= 0:
+            raise ValueError(f"Palm color chunk dimensions are invalid in {path}")
+
+        pil_image = _render_missing_cas_placeholder(width, height)
+        metadata["placeholder_reason"] = "missing_companion_casijpg"
+        if record_name:
+            metadata["expected_casijpg"] = f"{record_name}.PDB"
+        synthetic_name = f"{path.stem}_{record.unique_id:07d}_thumb.pdb"
         synthetic_path = path.with_name(synthetic_name)
         image = WQVImage(
             path=synthetic_path,
             image=pil_image,
             kind=WQVImageKind.MONOCHROME,
-            title=title or None,
+            title=record_name or None,
             captured_at=captured_at,
             metadata=metadata,
         )
-        if captured_at:
-            image.metadata.setdefault("captured_at", captured_at)
-        elif fallback_timestamp:
-            image.metadata.setdefault("captured_at", fallback_timestamp)
-
         images.append(image)
 
     return images
+
+
+def _render_missing_cas_placeholder(width: int, height: int) -> Image.Image:
+    width = max(64, min(width or 176, 512))
+    height = max(64, min(height or 144, 512))
+    placeholder = Image.new("L", (width, height), 24)
+    draw = ImageDraw.Draw(placeholder)
+    banner_height = max(24, height // 4)
+    draw.rectangle((0, 0, width, banner_height), fill=80)
+
+    message = "CAS image missing"
+    font = ImageFont.load_default()
+    try:
+        bbox = draw.textbbox((0, 0), message, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+    except AttributeError:  # pragma: no cover - Pillow < 8 fallback
+        text_width, text_height = draw.textsize(message, font=font)
+
+    text_x = max((width - text_width) // 2, 0)
+    text_y = max((banner_height - text_height) // 2, 0)
+    draw.text((text_x, text_y), message, fill=255, font=font)
+
+    footer_text = "Recorded thumbnail"
+    footer_font = ImageFont.load_default()
+    try:
+        footer_bbox = draw.textbbox((0, 0), footer_text, font=footer_font)
+        footer_height = footer_bbox[3] - footer_bbox[1]
+    except AttributeError:  # pragma: no cover - Pillow < 8 fallback
+        _, footer_height = draw.textsize(footer_text, font=footer_font)
+    footer_y = height - footer_height - 6
+    draw.text((6, footer_y), footer_text, fill=160, font=footer_font)
+    draw.rectangle((0, banner_height, width - 1, height - 1), outline=64)
+
+    return placeholder
+
+
+def _load_wqv_color_jpeg_database(
+    path: Path,
+    records: List[PalmRecord],
+    fallback_timestamp: Optional[str],
+) -> List[WQVImage]:
+    if not records:
+        return []
+
+    blob = bytearray()
+    chunk_sizes: List[str] = []
+    record_ids: List[str] = []
+
+    for record in records:
+        payload = record.payload
+        if len(payload) < 8 or not payload.startswith(b"DBLK"):
+            raise ValueError(
+                f"Palm color JPEG chunk {record.index} in {path} is missing DBLK header"
+            )
+        chunk_length = struct.unpack_from(">H", payload, 6)[0]
+        body = payload[8:]
+        if chunk_length and chunk_length <= len(body):
+            body = body[:chunk_length]
+        blob.extend(body)
+        chunk_sizes.append(str(len(body)))
+        record_ids.append(str(record.unique_id))
+
+    try:
+        pil_image = Image.open(BytesIO(blob)).convert("RGB")
+    except Exception as exc:
+        raise ValueError(f"Unable to decode JPEG payload in {path}: {exc}") from exc
+
+    metadata = {
+        "source_pdb": str(path),
+        "record_unique_ids": ",".join(record_ids),
+        "chunk_sizes": ",".join(chunk_sizes),
+    }
+
+    title = path.stem
+    image = WQVImage(
+        path=path,
+        image=pil_image,
+        kind=WQVImageKind.COLOR_JPEG,
+        title=title,
+        captured_at=fallback_timestamp,
+        metadata=metadata,
+    )
+    if fallback_timestamp:
+        image.metadata.setdefault("captured_at", fallback_timestamp)
+    return [image]
 
 
 def load_wqv_backup(root: Path | str) -> List[WQVImage]:
