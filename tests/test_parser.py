@@ -3,7 +3,9 @@ import shutil
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
+from wqv_viewer import parser
 from wqv_viewer.parser import (
     PalmRecord,
     WQVImageKind,
@@ -193,3 +195,47 @@ def test_delete_wqv_pdb_records(sample_pdb: Path) -> None:
 
     remaining = load_wqv_pdb(sample_pdb)
     assert len(remaining) == len(images) - 1
+
+
+def test_load_external_png(tmp_path: Path) -> None:
+    path = tmp_path / "sample.png"
+    source = Image.new("RGB", (320, 200), (12, 34, 56))
+    source.save(path)
+
+    image = load_wqv_image(path)
+    assert image.kind == WQVImageKind.EXTERNAL_RGB
+    assert image.image.size == (320, 200)
+    assert image.metadata.get("external") == "true"
+
+
+def test_load_external_jpeg_when_preferred(tmp_path: Path) -> None:
+    path = tmp_path / "sample.jpg"
+    Image.new("RGB", (512, 256), (0, 128, 255)).save(path, quality=95)
+
+    image = load_wqv_image(path, prefer_external=True)
+    assert image.kind == WQVImageKind.EXTERNAL_RGB
+    assert image.image.size == (512, 256)
+
+
+def test_prefer_external_reports_palm_fallback(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "needs_palm.jpg"
+    target.write_bytes(b"fake")
+
+    def _fake_external(_path):
+        raise ValueError("external decode failed")
+
+    def _fake_wqv_color(path):
+        return parser.WQVImage(
+            path=path,
+            image=Image.new("RGB", (10, 10), (1, 2, 3)),
+            kind=WQVImageKind.COLOR_JPEG,
+            metadata={},
+        )
+
+    monkeypatch.setattr(parser, "_load_external_image", _fake_external)
+    monkeypatch.setattr(parser, "load_wqv_color", _fake_wqv_color)
+
+    image = load_wqv_image(target, prefer_external=True)
+    assert image.kind == WQVImageKind.COLOR_JPEG
+    assert image.metadata.get("decoder") == "wqv_color"
+    assert image.metadata.get("preferred_external") == "true"

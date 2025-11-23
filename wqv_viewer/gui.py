@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from PIL import Image
+from PIL.ImageQt import ImageQt
 from PyQt6.QtCore import (
     Qt,
     QSize,
@@ -36,6 +37,7 @@ from PyQt6.QtGui import (
     QPainter,
     QColor,
     QPen,
+    QPolygonF,
     QWheelEvent,
     QKeySequence,
     QShortcut,
@@ -71,12 +73,21 @@ from PyQt6.QtWidgets import (
 )
 
 from .exporter import export_result
-from .parser import WQVImage, WQVLoadReport, delete_wqv_pdb_records, load_wqv_pdb
+from .parser import (
+    WQVImage,
+    WQVImageKind,
+    WQVLoadReport,
+    delete_wqv_pdb_records,
+    load_wqv_image,
+    load_wqv_pdb,
+)
 from .pipeline import PipelineConfig, PipelineResult, PipelineStage, build_pipeline, run_pipeline
 from .upscaling import ALLOWED_CONVENTIONAL_SCALES, Upscaler, ai_upscalers, conventional_upscalers
 
 
 logger = logging.getLogger(__name__)
+
+_LANCZOS_FILTER = getattr(getattr(Image, "Resampling", None), "LANCZOS", None) or Image.LANCZOS
 
 
 def _pil_to_qpixmap(image: Image.Image) -> QPixmap:
@@ -87,12 +98,9 @@ def _pil_to_qpixmap(image: Image.Image) -> QPixmap:
     else:
         pil_image = image.copy()
 
-    mode = pil_image.mode
-    buffer = pil_image.tobytes("raw", mode)
-    if mode == "RGB":
-        qimage = QImage(buffer, pil_image.width, pil_image.height, QImage.Format.Format_RGB888)
-    else:  # RGBA
-        qimage = QImage(buffer, pil_image.width, pil_image.height, QImage.Format.Format_RGBA8888)
+    qimage = ImageQt(pil_image)
+    if not isinstance(qimage, QImage):
+        qimage = QImage(qimage)
 
     return QPixmap.fromImage(qimage.copy())
 
@@ -140,7 +148,7 @@ class ZoomableImageView(QWidget):
 
     def set_image(self, image: Image.Image | WQVImage) -> None:
         if isinstance(image, WQVImage):
-            pixmap = QPixmap.fromImage(image.to_qimage())
+            pixmap = _pil_to_qpixmap(image.image)
         else:
             pixmap = _pil_to_qpixmap(image)
         self._pixmap = pixmap
@@ -303,6 +311,8 @@ class ImageBrowser(QWidget):
     upscale_completed = pyqtSignal()
     upscale_failed = pyqtSignal(str)
     upscale_cancelled = pyqtSignal()
+
+    _EXTERNAL_THUMB_LIMIT = 200
 
     def __init__(self, *, async_enabled: bool = True) -> None:
         super().__init__()
@@ -504,7 +514,14 @@ class ImageBrowser(QWidget):
         self.list_widget.clear()
         for image in self._images:
             item = QListWidgetItem(image.path.name)
-            thumbnail = _pil_to_qpixmap(image.image)
+            preview_image = image.image
+            if image.kind == WQVImageKind.EXTERNAL_RGB:
+                preview_image = image.image.copy()
+                preview_image.thumbnail(
+                    (self._EXTERNAL_THUMB_LIMIT, self._EXTERNAL_THUMB_LIMIT),
+                    _LANCZOS_FILTER,
+                )
+            thumbnail = _pil_to_qpixmap(preview_image)
             thumbnail = thumbnail.scaled(
                 self.list_widget.iconSize(),
                 Qt.AspectRatioMode.KeepAspectRatio,
@@ -1157,6 +1174,7 @@ class MainWindow(QMainWindow):
         self._resource_icon_cache: Dict[str, QIcon] = {}
         self._zoom_icon_cache: Dict[str, QIcon] = {}
         self._preset_icon_cache: Dict[str, QIcon] = {}
+        self._image_icon_cache: Dict[str, QIcon] = {}
         self._action_icons: Dict[QAction, Callable[[], QIcon] | str] = {}
         self._delete_disabled_reason: Optional[str] = None
         self._last_load_report: Optional[WQVLoadReport] = None
@@ -1241,6 +1259,59 @@ class MainWindow(QMainWindow):
         self._preset_icon_cache[key] = icon
         return icon
 
+    def _make_open_image_icon(self) -> QIcon:
+        palette = self.palette()
+        frame_color = palette.color(QPalette.ColorRole.ButtonText)
+        accent_color = palette.color(QPalette.ColorRole.Highlight)
+        background_color = palette.color(QPalette.ColorRole.Base)
+        key = f"open-image:{frame_color.rgba()}:{accent_color.rgba()}:{background_color.rgba()}"
+        cached = self._image_icon_cache.get(key)
+        if cached is not None:
+            return cached
+
+        size = 18
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        frame_pen = QPen(frame_color)
+        frame_pen.setWidth(2)
+        painter.setPen(frame_pen)
+        painter.setBrush(background_color)
+        outer_rect = QRectF(2, 3, size - 4, size - 5)
+        painter.drawRoundedRect(outer_rect, 3, 3)
+
+        # Draw a simple landscape thumbnail inside the frame.
+        inner_rect = outer_rect.adjusted(3, 3, -3, -3)
+        painter.setBrush(Qt.GlobalColor.transparent)
+        painter.drawRect(inner_rect)
+
+        mountain_pen = QPen(accent_color)
+        mountain_pen.setWidth(2)
+        painter.setPen(mountain_pen)
+        painter.setBrush(Qt.GlobalColor.transparent)
+        mountain_path = QPolygonF(
+            [
+                QPointF(inner_rect.left(), inner_rect.bottom() - 3),
+                QPointF(inner_rect.center().x() - 2, inner_rect.center().y()),
+                QPointF(inner_rect.center().x() + 2, inner_rect.bottom() - 3),
+            ]
+        )
+        painter.drawPolyline(mountain_path)
+
+        sun_radius = 2
+        sun_center = QPointF(inner_rect.right() - 3, inner_rect.top() + 3)
+        painter.setBrush(accent_color)
+        painter.drawEllipse(sun_center, sun_radius, sun_radius)
+
+        painter.end()
+
+        icon = QIcon(pixmap)
+        self._image_icon_cache[key] = icon
+        return icon
+
     # ---------------------------------------------------------------- actions
     def _resources_dir(self) -> Path:
         return Path(__file__).resolve().parent.parent / "resources"
@@ -1289,6 +1360,10 @@ class MainWindow(QMainWindow):
         self.open_pdb_action = QAction("Open WQVLinkDB…", self)
         self.open_pdb_action.triggered.connect(self.open_pdb)
         self._register_icon(self.open_pdb_action, "open.png")
+
+        self.open_image_action = QAction("Open Image…", self)
+        self.open_image_action.triggered.connect(self.open_images)
+        self._register_icon(self.open_image_action, self._make_open_image_icon)
 
         self.export_action = QAction("Export Selected…", self)
         self.export_action.triggered.connect(self.export_selected)
@@ -1355,6 +1430,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(self.open_pdb_action)
+        file_menu.addAction(self.open_image_action)
         self.recent_menu = file_menu.addMenu("Open Recent")
         file_menu.addSeparator()
         file_menu.addAction(self.export_action)
@@ -1383,6 +1459,7 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main")
         toolbar.addAction(self.open_pdb_action)
+        toolbar.addAction(self.open_image_action)
         toolbar.addAction(self.export_action)
         toolbar.addAction(self.delete_action)
         toolbar.addAction(self.save_pipeline_preset_action)
@@ -1572,9 +1649,92 @@ class MainWindow(QMainWindow):
         count = self._load_pdb(Path(path))
         self.status_bar.showMessage(f"Loaded {count} images from {Path(path).name}", 5000)
 
-    def _pdb_path_from_mime(self, mime_data: QMimeData | None) -> Optional[Path]:
+    def open_images(self) -> None:
+        start_dir_value = self._settings.value("session/lastImageDirectory", "")
+        if isinstance(start_dir_value, str) and start_dir_value:
+            start_dir = Path(start_dir_value)
+        elif self._current_pdb_path is not None:
+            start_dir = self._current_pdb_path.parent
+        elif self._last_loaded_pdb_path is not None:
+            start_dir = self._last_loaded_pdb_path.parent
+        else:
+            start_dir = Path.home()
+
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Open PNG or JPEG",
+            str(start_dir),
+            "Images (*.png *.jpg *.jpeg);;All files (*)",
+        )
+        if not paths:
+            return
+
+        self._ingest_image_files([Path(entry) for entry in paths], allow_popups=True)
+
+    def _ingest_image_files(self, paths: Sequence[Path], *, allow_popups: bool) -> bool:
+        if not paths:
+            return False
+
+        images: List[WQVImage] = []
+        errors: List[str] = []
+        for candidate in paths:
+            try:
+                images.append(load_wqv_image(candidate, prefer_external=True))
+            except Exception as exc:  # pragma: no cover - runtime guard
+                logger.warning("Failed to load %s: %s", candidate, exc, exc_info=True)
+                errors.append(f"{candidate.name}: {exc}")
+
+        if not images:
+            message = "None of the provided files could be opened."
+            if allow_popups:
+                QMessageBox.warning(self, "Load images", message)
+            else:
+                self.status_bar.showMessage(message, 5000)
+            return False
+
+        palm_fallbacks = [
+            img.path.name
+            for img in images
+            if img.metadata.get("decoder") == "wqv_color" and img.metadata.get("preferred_external") == "true"
+        ]
+
+        self.browser.load_images(images)
+        self._current_pdb_path = None
+        self._set_delete_action_enabled(
+            False,
+            reason="Deletion is only available for Palm database records.",
+        )
+        self._update_diagnostics_state(None)
+        self._record_selection_signature()
+
+        self._settings.setValue("session/lastImageDirectory", str(paths[0].parent))
+        base_message = f"Loaded {len(images)} standalone image{'s' if len(images) != 1 else ''}"
+        if palm_fallbacks:
+            preview = ", ".join(palm_fallbacks[:3])
+            if len(palm_fallbacks) > 3:
+                preview += f" …(+{len(palm_fallbacks) - 3})"
+            base_message += f" (Palm decoder used for {preview})"
+        self.status_bar.showMessage(base_message, 5000)
+
+        if errors:
+            summary = "\n".join(errors[:5])
+            if len(errors) > 5:
+                summary += f"\n…and {len(errors) - 5} more"
+            if allow_popups:
+                QMessageBox.warning(
+                    self,
+                    "Some files were skipped",
+                    summary,
+                )
+            else:
+                self.status_bar.showMessage(summary, 6000)
+        return True
+
+    def _paths_from_mime(self, mime_data: QMimeData | None) -> tuple[List[Path], List[Path]]:
+        pdbs: List[Path] = []
+        images: List[Path] = []
         if mime_data is None or not mime_data.hasUrls():
-            return None
+            return pdbs, images
         for url in mime_data.urls():
             if not isinstance(url, QUrl) or not url.isLocalFile():
                 continue
@@ -1582,9 +1742,14 @@ class MainWindow(QMainWindow):
                 candidate = Path(url.toLocalFile()).resolve()
             except Exception:
                 continue
-            if candidate.suffix.lower() == ".pdb" and candidate.exists():
-                return candidate
-        return None
+            if not candidate.exists():
+                continue
+            suffix = candidate.suffix.lower()
+            if suffix == ".pdb":
+                pdbs.append(candidate)
+            elif suffix in {".png", ".jpg", ".jpeg", ".jpe"}:
+                images.append(candidate)
+        return pdbs, images
 
     def _open_dropped_database(self, path: Path) -> None:
         try:
@@ -2037,24 +2202,30 @@ class MainWindow(QMainWindow):
         self._settings.sync()
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # type: ignore[override]
-        if self._pdb_path_from_mime(event.mimeData()) is not None:
+        pdb_paths, image_paths = self._paths_from_mime(event.mimeData())
+        if pdb_paths or image_paths:
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # type: ignore[override]
-        if self._pdb_path_from_mime(event.mimeData()) is not None:
+        pdb_paths, image_paths = self._paths_from_mime(event.mimeData())
+        if pdb_paths or image_paths:
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event: QDropEvent) -> None:  # type: ignore[override]
-        path = self._pdb_path_from_mime(event.mimeData())
-        if path is None:
-            event.ignore()
+        pdb_paths, image_paths = self._paths_from_mime(event.mimeData())
+        if pdb_paths:
+            event.acceptProposedAction()
+            self._open_dropped_database(pdb_paths[0])
             return
-        event.acceptProposedAction()
-        self._open_dropped_database(path)
+        if image_paths:
+            event.acceptProposedAction()
+            self._ingest_image_files(image_paths, allow_popups=False)
+            return
+        event.ignore()
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._save_session_state()

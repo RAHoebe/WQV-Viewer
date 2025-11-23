@@ -47,6 +47,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--monochrome-levels", type=int, default=16, help="Number of grayscale levels when --monochrome-style is enabled (default: 16).")
     parser.add_argument("--monochrome-noise", type=float, default=0.01, help="Noise strength for monochrome simulation (default: 0.01).")
     parser.add_argument("--tensorboard", action="store_true", help="Enable TensorBoard logging under the workspace directory.")
+    parser.add_argument("--init-weights", type=Path, default=None, help="Optional deployable RRDB checkpoint to warm-start the generator from.")
+    parser.add_argument(
+        "--init-arch",
+        choices=["auto", "rrdb"],
+        default="auto",
+        help="Architecture hint when using --init-weights (default: auto).",
+    )
     parser.add_argument("--config-only", action="store_true", help="Emit resolved configuration as JSON and exit.")
     return parser
 
@@ -86,7 +93,11 @@ def parse_config(argv: list[str] | None = None) -> TrainerConfig:
         monochrome_style=args.monochrome_style,
         monochrome_levels=max(2, args.monochrome_levels),
         monochrome_noise=max(0.0, args.monochrome_noise),
+        init_weights=args.init_weights,
+        init_arch=args.init_arch,
     )
+    if config.resume_from is not None and config.init_weights is not None:
+        parser.error("--resume and --init-weights cannot be used together. Pick one recovery path.")
     if args.config_only:
         print(json.dumps(config.__dict__, default=str, indent=2))
         sys.exit(0)

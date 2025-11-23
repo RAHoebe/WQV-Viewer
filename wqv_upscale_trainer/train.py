@@ -21,7 +21,7 @@ from tqdm.auto import tqdm
 
 from .config import TrainerConfig
 from .data import SyntheticDegradationDataset, discover_images, split_datasets
-from .models import build_generator, save_generator
+from .models import GeneratorSpec, WarmStartState, build_generator, load_warm_start_state, save_generator
 
 
 logger = logging.getLogger(__name__)
@@ -196,6 +196,8 @@ def _save_checkpoint(
     optimizer: torch.optim.Optimizer,
     ema: Optional[EMA],
     step: int,
+    *,
+    metadata: Optional[Mapping[str, object]] = None,
 ) -> None:
     payload = {
         "generator": model.state_dict(),
@@ -204,23 +206,34 @@ def _save_checkpoint(
     }
     if ema is not None:
         payload["ema"] = {k: v.cpu() for k, v in ema.shadow.items()}
+    if metadata is not None:
+        payload["metadata"] = dict(metadata)
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, path)
     logger.info("Checkpoint written to %s", path)
     deploy_path = path.with_name(f"{path.stem}_deploy{path.suffix}")
     try:
-        _write_deployable_checkpoint(payload, deploy_path)
+        _write_deployable_checkpoint(payload, deploy_path, metadata=metadata)
     except Exception:  # pragma: no cover - defensive guard
         logger.warning("Failed to write deployable checkpoint copy to %s", deploy_path, exc_info=True)
 
 
-def _write_deployable_checkpoint(payload: Mapping[str, object], destination: Path) -> None:
+def _write_deployable_checkpoint(
+    payload: Mapping[str, object],
+    destination: Path,
+    *,
+    metadata: Optional[Mapping[str, object]] = None,
+) -> None:
     state = _extract_deployable_state(payload)
     if state is None:
         logger.debug("Skip deployable export; no suitable state dict found.")
         return
     destination.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"params": state}, destination)
+    export_meta = metadata or payload.get("metadata")
+    payload_dict: Dict[str, object] = {"params": state}
+    if export_meta is not None:
+        payload_dict["meta"] = dict(export_meta)
+    torch.save(payload_dict, destination)
     logger.info("Deployable checkpoint written to %s", destination)
 
 
@@ -348,7 +361,32 @@ def train_model(config: TrainerConfig) -> None:
         workers=max(1, config.num_workers // 2),
     )
 
-    generator = build_generator(config.scale).to(device)
+    warm_start: Optional[WarmStartState] = None
+    spec = GeneratorSpec()
+    if config.init_weights is not None:
+        warm_start = load_warm_start_state(config.init_weights, arch_hint=config.init_arch)
+        spec = warm_start.spec
+        if warm_start.scale is not None and warm_start.scale != config.scale:
+            logger.warning(
+                "Warm-start weights target %dx but trainer was asked for %dx; continuing anyway.",
+                warm_start.scale,
+                config.scale,
+            )
+        logger.info(
+            "Warm-starting generator from %s (feat=%d, blocks=%d, grow=%d)",
+            config.init_weights,
+            spec.num_feat,
+            spec.num_block,
+            spec.num_grow_ch,
+        )
+
+    generator = build_generator(config.scale, spec=spec).to(device)
+    if warm_start is not None:
+        missing, unexpected = generator.load_state_dict(warm_start.state_dict, strict=False)
+        if unexpected:
+            logger.warning("Warm-start ignored %d unexpected parameters: %s", len(unexpected), unexpected[:5])
+        if missing:
+            logger.info("Warm-start left %d parameters to random init (e.g. %s)", len(missing), missing[:5])
     optimizer = torch.optim.Adam(
         generator.parameters(),
         lr=config.learning_rate,
@@ -356,6 +394,11 @@ def train_model(config: TrainerConfig) -> None:
         weight_decay=config.weight_decay,
     )
     ema = EMA(generator, decay=config.ema_decay)
+    export_metadata = {
+        "arch": "rrdb",
+        "scale": config.scale,
+        "spec": asdict(spec),
+    }
 
     perceptual_loss: Optional[VGGPerceptualLoss] = None
     if config.perceptual_weight > 0:
@@ -475,15 +518,29 @@ def train_model(config: TrainerConfig) -> None:
 
         if config.checkpoint_interval > 0 and (step + 1) % config.checkpoint_interval == 0:
             ckpt_path = checkpoints_dir / f"scale{config.scale}_step{step + 1}.pth"
-            _save_checkpoint(ckpt_path, generator, optimizer, ema, step + 1)
+            _save_checkpoint(
+                ckpt_path,
+                generator,
+                optimizer,
+                ema,
+                step + 1,
+                metadata=export_metadata,
+            )
 
     final_ckpt = checkpoints_dir / f"scale{config.scale}_final.pth"
-    _save_checkpoint(final_ckpt, generator, optimizer, ema, config.steps)
+    _save_checkpoint(
+        final_ckpt,
+        generator,
+        optimizer,
+        ema,
+        config.steps,
+        metadata=export_metadata,
+    )
 
     best_model = workspace / "models" / f"wqv_neosr_x{config.scale}.pth"
     best_model.parent.mkdir(parents=True, exist_ok=True)
     with ema.average_parameters(generator):
-        save_generator(generator, best_model)
+        save_generator(generator, best_model, scale=config.scale, spec=spec)
     logger.info("Saved deployable generator to %s", best_model)
 
     if test_loader is not None:

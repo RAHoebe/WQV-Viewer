@@ -232,17 +232,23 @@ def test_pdb_path_from_mime_filters_non_pdb(tmp_path) -> None:
         valid_path.write_bytes(b"")
         mime = QMimeData()
         mime.setUrls([QUrl.fromLocalFile(str(valid_path))])
-        assert window._pdb_path_from_mime(mime) == valid_path.resolve()
+        pdbs, images = window._paths_from_mime(mime)
+        assert pdbs == [valid_path.resolve()]
+        assert images == []
 
         invalid = tmp_path / "image.pdr"
         invalid.write_bytes(b"")
         mime_invalid = QMimeData()
         mime_invalid.setUrls([QUrl.fromLocalFile(str(invalid))])
-        assert window._pdb_path_from_mime(mime_invalid) is None
+        pdbs, images = window._paths_from_mime(mime_invalid)
+        assert pdbs == []
+        assert images == []
 
         remote_mime = QMimeData()
         remote_mime.setUrls([QUrl("https://example.com/file.pdb")])
-        assert window._pdb_path_from_mime(remote_mime) is None
+        pdbs, images = window._paths_from_mime(remote_mime)
+        assert pdbs == []
+        assert images == []
     finally:
         window.deleteLater()
         if QApplication.instance() is app:
@@ -315,5 +321,31 @@ def test_recent_files_capped_at_ten(tmp_path) -> None:
         assert window_reloaded._recent_files[0] == str(latest_path.resolve())
     finally:
         window_reloaded.deleteLater()
+        if QApplication.instance() is app:
+            app.quit()
+
+
+def test_open_standalone_jpeg_shows_preview(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings_path = Path(tmp_path) / "settings.ini"
+    settings = QSettings(str(settings_path), QSettings.Format.IniFormat)
+
+    window = MainWindow(settings=settings, enable_async_upscale=False)
+    try:
+        image_path = Path(__file__).parent / "data" / "test.jpg"
+        assert image_path.exists()
+        assert window._ingest_image_files([image_path], allow_popups=False)
+        app.processEvents()
+
+        pixmap = window.browser.original_view.current_pixmap()
+        assert pixmap is not None and not pixmap.isNull()
+
+        # Re-select the same row to mimic the user clicking the entry again.
+        window.browser.list_widget.setCurrentRow(0)
+        app.processEvents()
+        pixmap = window.browser.original_view.current_pixmap()
+        assert pixmap is not None and not pixmap.isNull()
+    finally:
+        window.deleteLater()
         if QApplication.instance() is app:
             app.quit()

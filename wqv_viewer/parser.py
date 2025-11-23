@@ -51,6 +51,7 @@ class WQVImageKind(str, Enum):
 
     MONOCHROME = "monochrome"
     COLOR_JPEG = "color-jpeg"
+    EXTERNAL_RGB = "external-rgb"
 
 
 @dataclass()
@@ -109,10 +110,12 @@ class PalmRecord:
     index: int
 
 
-def load_wqv_image(path: Path | str) -> WQVImage:
-    """Decode a WQV image from ``path``.
+def load_wqv_image(path: Path | str, *, prefer_external: bool = False) -> WQVImage:
+    """Decode an image from ``path``.
 
-    The loader attempts to auto-detect the file flavour by extension.
+    By default, the loader assumes ``.jpg`` files are WQV colour captures that may
+    contain the legacy ``DBLK`` shim. Pass ``prefer_external=True`` to favour
+    treating them as ordinary standalone JPEGs first (useful for GUI imports).
     """
 
     path = Path(path)
@@ -120,21 +123,77 @@ def load_wqv_image(path: Path | str) -> WQVImage:
     if suffix in {".bin", ".pdr", ".wqv"}:
         return load_wqv_monochrome(path)
     if suffix in {".jpg", ".jpeg", ".jpe"}:
-        return load_wqv_color(path)
+        external_error: Exception | None = None
+        if prefer_external:
+            try:
+                image = _load_external_image(path)
+            except Exception as exc:  # pragma: no cover - external decode failure is rare
+                external_error = exc
+                logger.debug("External JPEG decode failed for %s; trying Palm path", path, exc_info=True)
+            else:
+                image.metadata.setdefault("decoder", "external")
+                image.metadata["preferred_external"] = "true"
+                return image
+        try:
+            image = load_wqv_color(path)
+        except Exception as exc_color:  # pragma: no cover - corrupted WQV payloads
+            logger.debug("Palm colour decode failed for %s; trying raw JPEG path", path, exc_info=True)
+            image = _load_external_image(path)
+            image.metadata.setdefault("decoder", "external")
+            if prefer_external:
+                image.metadata["preferred_external"] = "true"
+                image.metadata["decoder_note"] = "Palm colour decoder rejected file"
+            else:
+                image.metadata["decoder_note"] = "Palm colour decoder rejected file"
+            return image
+        if prefer_external:
+            image.metadata.setdefault("decoder", "wqv_color")
+            image.metadata["preferred_external"] = "true"
+            if external_error is not None:
+                image.metadata["decoder_note"] = str(external_error)
+        return image
+    if suffix in {".png"}:
+        return _load_external_image(path)
     if suffix == ".pdb":  # pragma: no cover - guidance path
         raise ValueError(
             "Palm database archives can contain multiple images; use load_wqv_pdb()."
         )
     # Fall back to trying monochrome first – these are the most common assets.
-    try:
-        return load_wqv_monochrome(path)
-    except Exception as exc_monochrome:  # pragma: no cover - rare path
         try:
-            return load_wqv_color(path)
-        except Exception as exc_color:  # pragma: no cover - rare path
-            raise ValueError(
-                f"Unrecognised WQV file format for {path}: {suffix}"
-            ) from exc_color if exc_color else exc_monochrome
+            return load_wqv_monochrome(path)
+        except Exception as exc_monochrome:  # pragma: no cover - rare path
+            try:
+                return load_wqv_color(path)
+            except Exception as exc_color:  # pragma: no cover - rare path
+                try:
+                    return _load_external_image(path)
+                except Exception as exc_external:  # pragma: no cover - rare path
+                    raise ValueError(
+                        f"Unrecognised WQV file format for {path}: {suffix}"
+                    ) from exc_external
+
+
+def _load_external_image(path: Path | str) -> WQVImage:
+    """Load a standalone PNG/JPEG that is not wrapped in Palm metadata."""
+
+    path = Path(path)
+    image = Image.open(path)
+    if image.mode not in {"RGB", "L"}:
+        image = image.convert("RGB")
+    elif image.mode == "L":
+        image = image.convert("RGB")
+
+    metadata = {
+        "source_file": str(path),
+        "external": "true",
+    }
+    return WQVImage(
+        path=path,
+        image=image,
+        kind=WQVImageKind.EXTERNAL_RGB,
+        title=path.stem,
+        metadata=metadata,
+    )
 
 
 def load_wqv_monochrome(path: Path | str, *, width: int = 120, height: int = 120) -> WQVImage:
@@ -483,6 +542,7 @@ def load_wqv_backup(root: Path | str) -> List[WQVImage]:
         ".jpg",
         ".jpeg",
         ".jpe",
+        ".png",
     }
 
     collected: List[WQVImage] = []
@@ -510,7 +570,7 @@ def _load_wqv_file(path: Path) -> List[WQVImage]:
     suffix = path.suffix.lower()
     if suffix == ".pdb":
         return load_wqv_pdb(path)
-    if suffix in {".bin", ".pdr", ".wqv", ".jpg", ".jpeg", ".jpe"}:
+    if suffix in {".bin", ".pdr", ".wqv", ".jpg", ".jpeg", ".jpe", ".png"}:
         return [load_wqv_image(path)]
     raise ValueError(f"Unsupported WQV file type: {path}")
 

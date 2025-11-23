@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
+from collections.abc import Mapping
+from typing import Any, Dict, Optional
 
 import torch
 from torch import nn
@@ -52,6 +53,13 @@ class GeneratorSpec:
     num_feat: int = 64
     num_block: int = 23
     num_grow_ch: int = 32
+
+
+@dataclass
+class WarmStartState:
+    state_dict: Dict[str, torch.Tensor]
+    spec: GeneratorSpec
+    scale: Optional[int] = None
 
 
 class ExtendedRRDBNet(nn.Module):
@@ -140,8 +148,134 @@ def build_generator(scale: int, *, spec: GeneratorSpec | None = None) -> nn.Modu
     return ExtendedRRDBNet(scale=scale, spec=spec)
 
 
-def save_generator(generator: nn.Module, path: Path) -> None:
+def _extract_state_dict(payload: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    if any(isinstance(key, str) and ("." in key or key.endswith(("weight", "bias"))) for key in payload):
+        return payload
+    for candidate_key in ("params", "params_ema", "ema", "generator", "state_dict", "model"):
+        candidate = payload.get(candidate_key)
+        if isinstance(candidate, Mapping):
+            extracted = _extract_state_dict(candidate)
+            if extracted is not None:
+                return extracted
+    return None
+
+
+def _infer_rrdb_spec(state: Mapping[str, torch.Tensor]) -> GeneratorSpec:
+    spec = GeneratorSpec()
+    conv_first = state.get("conv_first.weight")
+    if isinstance(conv_first, torch.Tensor):
+        spec.num_feat = int(conv_first.shape[0])
+        in_ch = int(conv_first.shape[1])
+        for factor in (16, 4, 1):
+            if in_ch % factor == 0:
+                candidate = in_ch // factor
+                if candidate in (1, 3, 4):
+                    spec.num_in_ch = candidate
+                    break
+        else:
+            spec.num_in_ch = in_ch
+    conv_last = state.get("conv_last.weight")
+    if isinstance(conv_last, torch.Tensor):
+        spec.num_out_ch = int(conv_last.shape[0])
+
+    block_ids: set[int] = set()
+    for key in state.keys():
+        if not key.startswith("body."):
+            continue
+        parts = key.split(".")
+        if len(parts) < 2:
+            continue
+        try:
+            block_ids.add(int(parts[1]))
+        except ValueError:
+            continue
+    if block_ids:
+        spec.num_block = max(block_ids) + 1
+
+    grow_tensor = state.get("body.0.rdb1.conv1.weight")
+    if grow_tensor is None:
+        for name, tensor in state.items():
+            if name.endswith("rdb1.conv1.weight") and isinstance(tensor, torch.Tensor):
+                grow_tensor = tensor
+                break
+    if isinstance(grow_tensor, torch.Tensor):
+        spec.num_grow_ch = int(grow_tensor.shape[0])
+    return spec
+
+
+def load_warm_start_state(path: Path, *, arch_hint: str = "auto") -> WarmStartState:
+    payload = torch.load(path, map_location="cpu")
+    meta = {}
+    if isinstance(payload, Mapping):
+        meta_obj = payload.get("meta") or payload.get("metadata")
+        if isinstance(meta_obj, Mapping):
+            meta = dict(meta_obj)
+    state_mapping: Optional[Mapping[str, Any]] = None
+    if isinstance(payload, Mapping):
+        params = payload.get("params")
+        if isinstance(params, Mapping):
+            state_mapping = params
+    if state_mapping is None and isinstance(payload, Mapping):
+        state_mapping = _extract_state_dict(payload)
+    if state_mapping is None:
+        raise ValueError(f"{path} does not contain a recognizable RRDB state dict.")
+
+    arch = meta.get("arch") if isinstance(meta.get("arch"), str) else None
+    if arch_hint != "auto":
+        arch = arch_hint
+
+    if arch is None:
+        arch = "rrdb"
+    if arch.lower() not in {"rrdb", "rrdbnet", "sber_rrdbnet"}:
+        raise ValueError(
+            f"Warm-start weights at {path} declare unsupported architecture '{arch}'."
+        )
+
+    spec = None
+    spec_meta = meta.get("spec")
+    if isinstance(spec_meta, Mapping):
+        try:
+            spec = GeneratorSpec(
+                num_in_ch=int(spec_meta.get("num_in_ch", 3)),
+                num_out_ch=int(spec_meta.get("num_out_ch", 3)),
+                num_feat=int(spec_meta.get("num_feat", 64)),
+                num_block=int(spec_meta.get("num_block", 23)),
+                num_grow_ch=int(spec_meta.get("num_grow_ch", 32)),
+            )
+        except Exception as exc:  # pragma: no cover - metadata parsing guard
+            raise ValueError(f"Invalid warm-start metadata in {path}: {exc}") from exc
+    if spec is None:
+        tensor_state = {k: v for k, v in state_mapping.items() if isinstance(v, torch.Tensor)}
+        spec = _infer_rrdb_spec(tensor_state)
+
+    state_dict = {
+        name: tensor.detach().cpu()
+        for name, tensor in state_mapping.items()
+        if isinstance(tensor, torch.Tensor)
+    }
+    if not state_dict:
+        raise ValueError(f"Warm-start payload at {path} does not contain tensor parameters.")
+    scale = None
+    scale_meta = meta.get("scale")
+    if isinstance(scale_meta, int):
+        scale = scale_meta
+    return WarmStartState(state_dict=state_dict, spec=spec, scale=scale)
+
+
+def save_generator(
+    generator: nn.Module,
+    path: Path,
+    *,
+    scale: int,
+    spec: GeneratorSpec | None = None,
+    arch: str = "rrdb",
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     state = generator.state_dict()
     cpu_state = {name: tensor.detach().cpu() for name, tensor in state.items()}
-    torch.save({"params": cpu_state}, path)
+    metadata = {
+        "arch": arch,
+        "scale": scale,
+        "spec": asdict(spec) if spec is not None else None,
+    }
+    torch.save({"params": cpu_state, "meta": metadata}, path)

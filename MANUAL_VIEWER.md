@@ -20,17 +20,28 @@ This manual covers every workflow exposed by `wqv_viewer`, from installing depen
 ## 2. Loading Wristcam Archives
 
 ### 2.1 Supported assets
+
 - Palm backups: `WQVLinkDB.PDB`, `WQVColorDB.PDB`, and `CASIJPG*.PDB` files.
 - Raw dumps: `.bin`, `.pdr`, `.wqv`.
 - Exported JPEGs: `.jpg`, `.jpeg`, `.jpe` (Casio viewer output).
+- Standalone captures: ordinary `.jpg/.jpeg` and `.png` files from any source.
 
 > **Color requirement:** for WQV-3/WQV-10 colour captures, keep the corresponding `CASIJPG*.PDB` files next to `WQVColorDB.PDB`. The viewer auto-detects and uses them to show real colour thumbnails; otherwise it generates a placeholder and records a warning in the diagnostics panel. You can also open a `CASIJPG` PDB directly—each contains one JPEG.
 
 ### 2.2 Loading methods
+
 - **File → Open WQVLinkDB…** browses for `.pdb` archives.
 - **Drag & drop** a `.pdb` file onto the main window. Invalid drops are ignored with a status explanation.
 - **Open Recent** holds the last ten databases; missing files are pruned the moment you try to open them.
 - **File → Clear** closes the session but keeps the history so you can reopen quickly.
+
+### 2.3 Standalone PNG/JPEG workflow
+
+- **File → Open Image…** accepts any mixture of PNG and JPEG files. The viewer remembers the last folder you used for image imports separately from Palm databases.
+- **Drag & drop** PNG/JPEG files directly from Explorer/Finder—the same handler that processes PDB drops now ingests image files. When you drop both PDBs and images at once, PDBs take priority and loose images are queued right after.
+- Each imported file becomes a `WQVImage` entry with metadata fields describing its source path and decoder. PNGs always go through Pillow; JPEGs try Pillow first and fall back to the Palm decoder if the file contains the Casio `DBLK` shim. When a fallback happens you’ll see a status-bar suffix such as “Palm decoder used for test.jpg”.
+- Thumbnails for large standalone images are clamped to 200×200 so dropping DSLR shots does not stall the UI. The original pixel resolution remains untouched in the preview pane.
+- Once loaded, standalone images behave just like Palm records: they participate in multi-selection, can be exported or upscaled, and show filename/resolution metadata in the side panel. Because they are not part of a Palm archive the **Delete Selected** action stays disabled.
 
 During load the parser removes empty Palm records, reconstructs JPEGs (stripping the proprietary `DBLK` blocks), captures all metadata, and emits diagnostics if anything looked suspicious.
 
@@ -59,25 +70,30 @@ During load the parser removes empty Palm records, reconstructs JPEGs (stripping
 ## 6. Upscaling Pipelines in Detail
 
 ### 6.1 Conventional stage
+
 - Choose between nearest, bilinear, bicubic, Lanczos, or custom Pillow resamplers.
 - Supported scales appear in the combo (2× through 6×). This stage can be disabled entirely.
 
 ### 6.2 AI stage
+
 - Pick from bundled Real-ESRGAN weights (`models/realesrgan`) or custom `.pth` files in `models/custom`.
 - Scales depend on the model (2×, 4×, 8×). Unsupported scales are hidden.
 - Enable/disable the stage via the checkbox.
 - Ordering combo decides whether AI runs before conventional (AI → Conventional) or after.
 
 ### 6.3 Device policy
+
 - **Auto**: try GPU first, fall back to CPU transparently.
 - **GPU only** / **CPU only**: restricts execution for reproducibility or when CUDA isn’t available.
 
 ### 6.4 Pipeline presets
+
 - Click the toolbar icons or use **Pipeline → Save/Load Pipeline Preset…**.
 - Saving suggests a name like `AI_NeoSR_8x__Conv_Bicubic_2x` based on the pipeline state. You can adjust before confirming.
 - Presets store both stage configurations and the device/order choices. They live in `QSettings` and sync instantly across sessions.
 
 ### 6.5 Async execution
+
 - Starting an upscale spawns a worker thread. The progress widget shows a busy indicator plus a Cancel button.
 - When the job finishes or fails, the status message reflects the pipeline summary (`AI: RealESRGAN_x4plus GPU→CPU fallback`).
 
@@ -100,6 +116,7 @@ During load the parser removes empty Palm records, reconstructs JPEGs (stripping
 ## 9. Session Persistence
 
 The viewer stores in `QSettings`:
+
 - Last opened database and selection signature.
 - Recent file list (max 10 entries).
 - Pipeline configuration and last used preset.
@@ -115,4 +132,4 @@ Everything restores automatically the next time you run `python -m wqv_viewer`.
 - **Presets not saving:** ensure the config directory is writable (Windows: `HKEY_CURRENT_USER\Software\RAHoebe\WQVViewer`).
 - **Offscreen testing:** set `QT_QPA_PLATFORM=offscreen` to run the GUI tests headlessly like the CI suite does.
 
-Happy exploring!``
+Happy exploring!

@@ -8,6 +8,7 @@ from typing import Literal, Sequence
 
 
 ScaleFactor = Literal[2, 4, 8]
+WarmStartArch = Literal["auto", "rrdb"]
 
 
 @dataclass
@@ -45,6 +46,8 @@ class TrainerConfig:
     monochrome_style: bool = False
     monochrome_levels: int = 16
     monochrome_noise: float = 0.01
+    init_weights: Path | None = None
+    init_arch: WarmStartArch = "auto"
 
     def resolved_workspace(self) -> Path:
         return self.workspace.expanduser().resolve()
