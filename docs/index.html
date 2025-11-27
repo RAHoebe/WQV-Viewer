@@ -1,1 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WQV-Viewer — Wristcam Viewer & Trainer</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; max-width: 900px; margin: 48px auto; padding: 0 20px; color: #111; line-height: 1.5; }
+    header { margin-bottom: 1.25rem; }
+    h1 { margin: 0 0 .25rem 0; font-size: 1.6rem; }
+    p.lead { margin: 0; color: #333; }
+    nav a { color: #0366d6; text-decoration: none; margin-right: 1rem; }
+    section { margin-top: 1.25rem; padding-top: .75rem; border-top: 1px solid #eee; }
+    ul { margin: .5rem 0 0 1.25rem; }
+    pre { background:#f6f8fa; padding: .75rem; border-radius:6px; overflow:auto; }
+    footer { margin-top: 2rem; color: #666; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>WQV-Viewer</h1>
+    <p class="lead">A desktop viewer and trainer for Casio WQV wristcam Palm backups — preview, stitch colour companions, and upscale with configurable AI pipelines.</p>
+    <nav>
+      <a href="../README.md">README</a>
+      <a href="../MANUAL_VIEWER.md">Viewer Manual</a>
+      <a href="../MANUAL_TRAINER.md">Trainer Manual</a>
+    </nav>
+  </header>
 
+  <section>
+    <h2>Highlights</h2>
+    <ul>
+      <li>Palm-first parser: open WQVLink/WQVColor DBs, CASIJPG PDB files, raw dumps, or standalone PNG/JPEG images while preserving capture metadata.</li>
+      <li>Colour stitching: pair WQVColorDB with CASIJPG companions to display original colour captures when available.</li>
+      <li>Dual-pane GUI: thumbnails, metadata panel, and original/upscaled previews with responsive background workers.</li>
+      <li>Configurable upscaling pipelines: combine Pillow resamplers with Real-ESRGAN or NeoSR models and save named presets.</li>
+      <li>Trainer: generate degradations, train RRDB/NeoSR models and export deployable checkpoints.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Quick Start</h2>
+    <ol>
+      <li>Install requirements (Python 3.9+). From the project root:
+        <pre>python -m pip install -e .[dev]</pre>
+      </li>
+      <li>Run the viewer:
+        <pre>python -m wqv_viewer</pre>
+      </li>
+      <li>Open Palm databases via File → Open WQVLinkDB… or drag & drop images; configure pipelines and export PNG + JSON sidecars.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Models & Training</h2>
+    <p>Bundled Real-ESRGAN and repository custom models (e.g. models/custom/wqv_neosr_x4.pth) are auto-discovered. Drop additional .pth files into models/custom and restart to pick them up. Use the trainer to warm-start from RRDB checkpoints.</p>
+  </section>
+
+  <section>
+    <h2>Testing & Troubleshooting</h2>
+    <p>Run tests with:</p>
+    <pre>python -m pytest</pre>
+    <p>See README troubleshooting notes for GPU fallback, Qt plugin issues, and model visibility.</p>
+  </section>
+
+  <section>
+    <h2>Credits & License</h2>
+    <p>Built on community projects such as WQV_PDB_Tools and the Real-ESRGAN ecosystem. Distributed under the Apache License 2.0.</p>
+    <p>Useful links are available in the repository README and documentation files.</p>
+  </section>
+
+  <footer>
+    <p>Generated from the project's README. If you'd like changes to wording, links, or additional screenshots on this page, tell me what to include and I can update the file.</p>
+  </footer>
+</body>
+</html>
